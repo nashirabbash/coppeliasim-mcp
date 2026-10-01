@@ -145,6 +145,47 @@ def ensure_topdown_camera(sim):
     """Ensure bird's-eye top-down camera exists directly above board looking down."""
     return ensure_camera(sim, TOPDOWN_CAM_NAME, TOPDOWN_CAM_POS, TOPDOWN_CAM_ROT, TOPDOWN_FOV_DEG)
 
+def get_floor_info(sim) -> dict:
+    """Detect default scene floor size, bounds, and position."""
+    floor_candidates = ['/Floor', '/floor', '/Floor_5_25', '/resizableFloor']
+    floor_handle = -1
+    for cand in floor_candidates:
+        h = sim.getObject(cand, {'noError': True})
+        if h != -1:
+            floor_handle = h
+            break
+
+    if floor_handle == -1:
+        shapes = sim.getObjectsInTree(sim.handle_scene, sim.object_shape_type, 0)
+        for s in shapes:
+            alias = sim.getObjectAlias(s).lower()
+            if "floor" in alias:
+                floor_handle = s
+                break
+
+    if floor_handle != -1:
+        try:
+            bb_dims, _ = sim.getShapeBB(floor_handle)
+            pos = sim.getObjectPosition(floor_handle, -1)
+            sx, sy, sz = round(bb_dims[0], 2), round(bb_dims[1], 2), round(bb_dims[2], 2)
+            px, py, pz = round(pos[0], 2), round(pos[1], 2), round(pos[2], 2)
+            return {
+                "handle": floor_handle,
+                "name": sim.getObjectAlias(floor_handle),
+                "size_x": sx,
+                "size_y": sy,
+                "size_z": sz,
+                "pos": [px, py, pz],
+                "bounds_x": [round(px - sx/2, 2), round(px + sx/2, 2)],
+                "bounds_y": [round(py - sy/2, 2), round(py + sy/2, 2)],
+                "surface_z": round(pz + sz/2, 2)
+            }
+        except Exception:
+            pass
+
+    return {"exists": False, "size_x": 0.0, "size_y": 0.0, "bounds_x": [0, 0], "bounds_y": [0, 0], "surface_z": 0.0}
+
+
 
 def capture_snapshot(sim, output_path: Path = SNAPSHOT_PATH, cam_type: str = "isometric") -> str:
     """Capture RGB frame from specified camera and save cleanly to disk."""
@@ -221,7 +262,9 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "load_robot": load_robot_fn,
         "capture_snapshot": lambda: capture_snapshot(sim, SNAPSHOT_PATH, "isometric"),
         "capture_topdown": lambda: capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown"),
-        "ROBOT_ALIASES": list(ROBOT_ALIASES.keys())
+        "ROBOT_ALIASES": list(ROBOT_ALIASES.keys()),
+        "get_floor_info": lambda: get_floor_info(sim),
+
     }
 
 
@@ -245,13 +288,20 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         except Exception as snap_err:
             stderr_buf.write(f"\n[Warning: Snapshot capture failed: {snap_err}]")
 
+    floor_data = None
+    try:
+        floor_data = get_floor_info(sim)
+    except Exception:
+        pass
+
     return {
         "success": exec_success,
         "stdout": stdout_buf.getvalue(),
         "stderr": stderr_buf.getvalue(),
         "error": exec_error,
         "snapshot_path": snapshot_file,
-        "topdown_path": topdown_file
+        "topdown_path": topdown_file,
+        "floor": floor_data
     }
 
 

@@ -108,6 +108,7 @@ async def coppelia_step(code: str = "", reset: bool = False, headless: bool = Fa
         "stdout": result["stdout"].strip(),
         "stderr": result["stderr"].strip(),
         "error": result["error"],
+        "floor": result.get("floor"),
         "snapshot": result["snapshot_path"] if result.get("snapshot_path") and Path(result["snapshot_path"]).exists() else None,
         "topdown_snapshot": result["topdown_path"] if result.get("topdown_path") and Path(result["topdown_path"]).exists() else None,
         "eye_evaluation_directive": "EVALUATE YOUR EYES: Read /tmp/coppelia_topdown.png (top-down board view) and /tmp/coppelia_snapshot.png (isometric 3D view) to verify scene layout and robot placement before replying.",
