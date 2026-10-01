@@ -39,10 +39,19 @@ YOU MUST visually evaluate both views:
 3. If either snapshot shows misalignments, self-correct your script coordinates immediately!
 DO NOT conclude the task based solely on code exit status; check the images first!
 
+SCENE HIERARCHY AWARENESS RULE (PREVENT DUPLICATE MODELS):
+Every call returns `"scene_objects": [{"name": "...", "is_model": bool, "pos": [x, y, z]}]`.
+ALWAYS inspect `scene_objects` before creating/spawning:
+1. DO NOT spawn a robot if a model with the same alias/name already exists in `scene_objects`.
+2. To reuse existing robot: `robot = sim.getObject('/PioneerP3DX')` (or use existing handle).
+3. To remove duplicate/old objects: `sim.removeObject(sim.getObject('/OldName'))`.
+
 INJECTED OBJECTS IN CODE:
 - `sim`: CoppeliaSim ZeroMQ API module.
 - `load_robot(alias, position=[x,y,z], orientation=[a,b,g])`: Loads robot model.
   Valid aliases: ['pioneer', 'youbot', 'hexapod', 'ant_hexapod', 'omni', 'quadcopter', 'asti', 'panda', 'ur5', 'ur10', 'vacuum', 'epuck'].
+- `get_scene_hierarchy()`: Returns current active user models and shapes in the scene.
+- `get_floor_info()`: Returns default floor size, position, and bounding box.
 - `client`: RemoteAPIClient instance.
 
 EXACT API CHEAT-SHEET (DO NOT SEARCH OR GUESS - USE THESE DIRECTLY):
@@ -109,6 +118,7 @@ async def coppelia_step(code: str = "", reset: bool = False, headless: bool = Fa
         "stderr": result["stderr"].strip(),
         "error": result["error"],
         "floor": result.get("floor"),
+        "scene_objects": result.get("scene_objects"),
         "snapshot": result["snapshot_path"] if result.get("snapshot_path") and Path(result["snapshot_path"]).exists() else None,
         "topdown_snapshot": result["topdown_path"] if result.get("topdown_path") and Path(result["topdown_path"]).exists() else None,
         "eye_evaluation_directive": "EVALUATE YOUR EYES: Read /tmp/coppelia_topdown.png (top-down board view) and /tmp/coppelia_snapshot.png (isometric 3D view) to verify scene layout and robot placement before replying.",

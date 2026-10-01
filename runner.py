@@ -186,6 +186,38 @@ def get_floor_info(sim) -> dict:
     return {"exists": False, "size_x": 0.0, "size_y": 0.0, "bounds_x": [0, 0], "bounds_y": [0, 0], "surface_z": 0.0}
 
 
+SYSTEM_OBJECT_PREFIXES = (
+    'XYZCamera', 'XView', 'YView', 'ZView', 'NXView', 'NYView', 'NZView',
+    'DefaultLights', 'DefaultCamera', 'LightA', 'LightB', 'LightC', 'LightD',
+    'Agent_'
+)
+
+
+def get_scene_hierarchy(sim) -> list:
+    """Extract active user objects and models in scene to prevent duplicate creations."""
+    try:
+        root_objs = sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 1)
+        scene_items = []
+        for h in root_objs:
+            alias = sim.getObjectAlias(h)
+            if any(alias.startswith(p) for p in SYSTEM_OBJECT_PREFIXES):
+                continue
+            pos = [round(x, 2) for x in sim.getObjectPosition(h, -1)]
+            try:
+                is_model = (sim.getModelProperty(h) & sim.modelproperty_not_model) == 0
+            except Exception:
+                is_model = False
+            scene_items.append({
+                "name": alias,
+                "handle": h,
+                "is_model": is_model,
+                "pos": pos
+            })
+        return scene_items
+    except Exception:
+        return []
+
+
 
 def capture_snapshot(sim, output_path: Path = SNAPSHOT_PATH, cam_type: str = "isometric") -> str:
     """Capture RGB frame from specified camera and save cleanly to disk."""
@@ -264,6 +296,8 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "capture_topdown": lambda: capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown"),
         "ROBOT_ALIASES": list(ROBOT_ALIASES.keys()),
         "get_floor_info": lambda: get_floor_info(sim),
+        "get_scene_hierarchy": lambda: get_scene_hierarchy(sim),
+
 
     }
 
@@ -289,8 +323,10 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             stderr_buf.write(f"\n[Warning: Snapshot capture failed: {snap_err}]")
 
     floor_data = None
+    scene_hierarchy = []
     try:
         floor_data = get_floor_info(sim)
+        scene_hierarchy = get_scene_hierarchy(sim)
     except Exception:
         pass
 
@@ -301,7 +337,8 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "error": exec_error,
         "snapshot_path": snapshot_file,
         "topdown_path": topdown_file,
-        "floor": floor_data
+        "floor": floor_data,
+        "scene_objects": scene_hierarchy
     }
 
 
