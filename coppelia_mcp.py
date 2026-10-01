@@ -53,6 +53,13 @@ ALWAYS inspect `scene_objects` before creating/spawning:
 2. To reuse existing robot: `robot = sim.getObject('/PioneerP3DX')` (or use existing handle).
 3. To remove duplicate/old objects: `sim.removeObject(sim.getObject('/OldName'))`.
 
+WALLS & ENCLOSURE VISIBILITY RULE (PREVENT GREY VOID BLINDNESS):
+NEVER build solid block labyrinths or closed rooms that entomb the camera/robot in solid gray geometry!
+1. DO NOT spawn 50+ individual solid wall cuboids for mazes. Use thin perimeter borders instead (thickness 0.1m - 0.2m, NOT 0.8m thick blocks!).
+2. Color your walls and floor distinctly (e.g. walls = light blue `[0.3, 0.6, 0.9]`, floor = dark grey `[0.2, 0.2, 0.2]`). NEVER leave all shapes default uncolored grey!
+3. If creating rooms or houses with roofs: DO NOT seal roofs with solid opaque material. Either leave roof off, or make it high and distinctly colored so internal contents remain visible.
+
+
 INJECTED OBJECTS IN CODE:
 - `sim`: CoppeliaSim ZeroMQ API module.
 - `simIK`: CoppeliaSim Inverse/Forward Kinematics solver module.

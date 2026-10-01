@@ -145,6 +145,33 @@ def ensure_topdown_camera(sim):
     """Ensure bird's-eye top-down camera exists directly above board looking down."""
     return ensure_camera(sim, TOPDOWN_CAM_NAME, TOPDOWN_CAM_POS, TOPDOWN_CAM_ROT, TOPDOWN_FOV_DEG)
 
+def auto_frame_gui_camera(sim):
+    """Auto-frame GUI DefaultCamera from elevated perspective outside scene bounds.
+    Prevents user GUI viewport from getting trapped inside solid walls (grey void).
+    """
+    try:
+        gui_cam = sim.getObject('/DefaultCamera', {'noError': True})
+        if gui_cam == -1:
+            return
+
+        shapes = sim.getObjectsInTree(sim.handle_scene, sim.object_shape_type, 0)
+        max_r = 6.0
+        for s in shapes:
+            if s == 13: # skip default floor
+                continue
+            pos = sim.getObjectPosition(s, -1)
+            r = (pos[0]**2 + pos[1]**2)**0.5
+            if r > max_r:
+                max_r = r
+
+        cam_dist = max(max_r * 1.6, 9.0)
+        cam_height = max(cam_dist * 0.85, 7.5)
+        sim.setObjectPosition(gui_cam, -1, [cam_dist * 0.7, -cam_dist * 0.7, cam_height])
+        sim.setObjectOrientation(gui_cam, -1, [-2.1588, -0.6940, 2.7385])
+    except Exception:
+        pass
+
+
 def get_floor_info(sim) -> dict:
     """Detect default scene floor size, bounds, and position."""
     floor_candidates = ['/Floor', '/floor', '/Floor_5_25', '/resizableFloor']
@@ -321,6 +348,9 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             exec_success = True
         except Exception as e:
             exec_error = str(e)
+
+    if exec_success:
+        auto_frame_gui_camera(sim)
 
     snapshot_file = None
     topdown_file = None
