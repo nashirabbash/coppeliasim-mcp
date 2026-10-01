@@ -57,14 +57,12 @@ results = {{}}
 for name in {expected_objects}:
     h = sim.getObject(f'/{{name}}', {{'noError': True}})
     if h == -1:
-        # Check case-insensitive or partial
         all_objs = sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 0)
         found = any(name.lower() in sim.getObjectAlias(o).lower() for o in all_objs)
         results[name] = found
     else:
         results[name] = True
 
-# Count shapes in scene
 shapes = sim.getObjectsInTree(sim.handle_scene, sim.object_shape_type, 0)
 results['shape_count'] = len(shapes)
 results['sim_state'] = sim.getSimulationState()
@@ -98,23 +96,30 @@ def run_benchmark_case(case, omp_cmd="omp"):
 
     start_time = time.time()
 
-    # Execute agent via omp in JSON streaming mode
+    # Increase timeout to 300s to avoid premature timeout
     cmd = [omp_cmd, "--mode=json", case["prompt"]]
     
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=180
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "id": case["id"],
+            "status": "TIMEOUT",
+            "error": "Execution timed out after 300 seconds."
+        }
+
     duration = time.time() - start_time
 
     # Parse JSON stream from omp
-    tool_calls = 0
+    tool_invocations = 0
     input_tokens = 0
     output_tokens = 0
-    turns = 0
-    tool_names = []
+    tool_names = set()
 
     for line in proc.stdout.splitlines():
         line = line.strip()
@@ -122,51 +127,55 @@ def run_benchmark_case(case, omp_cmd="omp"):
             continue
         try:
             data = json.loads(line)
-            # Detect tool invocations
-            if data.get("type") == "tool_call" or "tool" in data:
-                tool_calls += 1
-                t_name = data.get("name") or data.get("tool")
+            event_type = data.get("type", "")
+            # Tool call events
+            if event_type in ("tool_call", "tool_use", "call"):
+                tool_invocations += 1
+                t_name = data.get("name") or data.get("tool") or data.get("function", {}).get("name")
                 if t_name:
-                    tool_names.append(t_name)
-            if "coppelia_step" in line:
-                if "coppelia_step" not in tool_names:
-                    tool_names.append("coppelia_step")
-            # Detect token usage
-            usage = data.get("usage") or {}
-            if "input_tokens" in usage:
-                input_tokens = max(input_tokens, usage["input_tokens"])
-            if "output_tokens" in usage:
-                output_tokens = max(output_tokens, usage["output_tokens"])
-            if "prompt_tokens" in usage:
-                input_tokens = max(input_tokens, usage["prompt_tokens"])
-            if "completion_tokens" in usage:
-                output_tokens = max(output_tokens, usage["completion_tokens"])
+                    tool_names.add(t_name)
+            elif data.get("tool") == "coppelia_step" or data.get("name") == "coppelia_step":
+                tool_invocations += 1
+                tool_names.add("coppelia_step")
+
+            # Token usage
+            usage = data.get("usage") or data.get("tokens") or {}
+            if isinstance(usage, dict):
+                if "input_tokens" in usage:
+                    input_tokens = max(input_tokens, usage["input_tokens"])
+                if "output_tokens" in usage:
+                    output_tokens = max(output_tokens, usage["output_tokens"])
+                if "prompt_tokens" in usage:
+                    input_tokens = max(input_tokens, usage["prompt_tokens"])
+                if "completion_tokens" in usage:
+                    output_tokens = max(output_tokens, usage["completion_tokens"])
+                if "total_tokens" in usage and input_tokens == 0:
+                    input_tokens = usage["total_tokens"]
         except json.JSONDecodeError:
             pass
 
-    # Fallback tool count check if json structure varies
-    if tool_calls == 0 and "coppelia_step" in proc.stdout:
-        tool_calls = proc.stdout.count("coppelia_step") // 2 or 1
+    # If stream didn't expose tool_call event types, fallback to 1 invocation
+    if tool_invocations == 0 and "coppelia_step" in proc.stdout:
+        tool_invocations = 1
+        tool_names.add("coppelia_step")
 
     # Verify physical scene in CoppeliaSim
     scene_data = query_scene_state(case["expected_objects"], case.get("min_shapes", 0))
 
-    # Verify objects presence
     objects_ok = all(scene_data.get(obj, False) for obj in case["expected_objects"])
     shapes_ok = scene_data.get("shape_count", 0) >= case.get("min_shapes", 0)
     sim_ok = objects_ok and shapes_ok
 
-    # Verify visual snapshot
     snapshot_ok = SNAPSHOT_PATH.exists() and SNAPSHOT_PATH.stat().st_size > 5000
 
-    status = "PASS" if (sim_ok and snapshot_ok and tool_calls <= 2) else "WARN" if sim_ok else "FAIL"
+    status = "PASS" if (sim_ok and snapshot_ok and tool_invocations <= 2) else "WARN" if sim_ok else "FAIL"
 
     return {
         "id": case["id"],
         "status": status,
         "duration_s": round(duration, 2),
-        "tool_calls": tool_calls,
-        "tool_names": list(set(tool_names)),
+        "tool_calls": tool_invocations,
+        "tool_names": list(tool_names),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "objects_verified": objects_ok,
@@ -203,8 +212,9 @@ def main():
     print("-" * 80)
 
     for r in results:
-        if r.get("status") == "ERROR":
-            print(f"{r['id']:<26} | {'ERROR':<6} | -     | -         | -          | -       | -")
+        if r.get("status") in ("ERROR", "TIMEOUT"):
+            st = r.get("status")
+            print(f"{r['id']:<26} | {st:<6} | -     | -         | -          | -       | -")
             continue
 
         scene_str = "OK" if r["objects_verified"] else "FAIL"

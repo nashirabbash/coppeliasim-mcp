@@ -42,9 +42,9 @@ CALIBRATED_CAM_ROT = [-2.1588, -0.6940, 2.7385]
 CALIBRATED_FOV_DEG = 65.0
 
 # Calibrated top-down camera (bird's-eye view looking straight down at simulation board):
-TOPDOWN_CAM_POS = [0.0, 0.0, 15.0]
-TOPDOWN_CAM_ROT = [3.14159265, 0.0, 0.0]
-TOPDOWN_FOV_DEG = 70.0
+TOPDOWN_CAM_POS = [0.0, 0.0, 20.0]
+TOPDOWN_CAM_ROT = [0, 0.0, 0.0]
+TOPDOWN_FOV_DEG = 90.0
 
 from PIL import Image
 

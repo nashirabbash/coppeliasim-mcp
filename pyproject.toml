@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coppeliasim-mcp"
+version = "0.1.0"
+description = "High-efficiency MCP server for CoppeliaSim robotics simulation with multimodal dual-camera feedback."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Nashir Abbas"}]
+dependencies = [
+    "mcp>=1.3.0",
+    "pyzmq>=25.0.0",
+    "cbor2>=5.4.0",
+    "pillow>=10.0.0"
+]
+
+[project.scripts]
+coppeliasim-mcp = "coppelia_mcp:main"
