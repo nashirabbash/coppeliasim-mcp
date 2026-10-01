@@ -28,6 +28,14 @@ server = MCPServer("coppeliasim")
 TOOL_DESCRIPTION = """Execute Python code directly inside CoppeliaSim simulator.
 Auto-launches simulator if closed, runs physics/scene code, auto-captures camera snapshot to /tmp/coppelia_snapshot.png, and returns execution result in ONE single call.
 
+MANDATORY VISUAL EVALUATION RULE (AGENT'S EYES):
+Every call returns `"snapshot": "/tmp/coppelia_snapshot.png"`.
+YOU MUST inspect and evaluate this snapshot visually:
+1. Verify shapes/walls/roofs are aligned and not collapsing under gravity.
+2. Verify the robot spawned upright on the floor and not trapped inside walls.
+3. If the image reveals flaws, self-correct your script coordinates immediately!
+DO NOT conclude the task based solely on code exit status; check the image first!
+
 INJECTED OBJECTS IN CODE:
 - `sim`: CoppeliaSim ZeroMQ API module.
 - `load_robot(alias, position=[x,y,z], orientation=[a,b,g])`: Loads robot model.
@@ -98,6 +106,7 @@ async def coppelia_step(code: str = "", reset: bool = False, headless: bool = Fa
         "stderr": result["stderr"].strip(),
         "error": result["error"],
         "snapshot": result["snapshot_path"] if result["snapshot_path"] and Path(result["snapshot_path"]).exists() else None,
+        "eye_evaluation_directive": "EVALUATE THIS SNAPSHOT: Read /tmp/coppelia_snapshot.png to inspect visual scene layout and robot placement before replying.",
         "available_robots": list(ROBOT_ALIASES.keys()) if not result["success"] else None
     }
 
