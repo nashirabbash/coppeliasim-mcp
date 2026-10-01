@@ -125,10 +125,12 @@ def ensure_camera(sim, name: str, pos: list, rot: list, fov_deg: float):
     cam_handle = sim.getObject(f"/{name}", {"noError": True})
     if cam_handle == -1:
         int_params = [1024, 768, 0, 0] # 1024x768 resolution
-        float_params = [0.1, 100.0, fov_deg * 3.14159265 / 180.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        # float_params[3] = 0.5 (sensor physical size in GUI, easily visible in scene hierarchy)
+        float_params = [0.1, 100.0, fov_deg * 3.14159265 / 180.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         cam_handle = sim.createVisionSensor(3, int_params, float_params)
         sim.setObjectAlias(cam_handle, name)
-
+        # Make it persistent / static
+        sim.setObjectProperty(cam_handle, sim.objectproperty_selectable)
     sim.setObjectPosition(cam_handle, -1, pos)
     sim.setObjectOrientation(cam_handle, -1, rot)
     return cam_handle
@@ -202,6 +204,13 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             sim.stopSimulation()
         except Exception:
             pass
+
+    # Always ensure both cameras exist in scene hierarchy on connection
+    try:
+        ensure_topdown_camera(sim)
+        ensure_observer_camera(sim)
+    except Exception:
+        pass
 
     load_robot_fn = make_load_robot_fn(sim)
 
