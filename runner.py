@@ -31,7 +31,13 @@ except ImportError as err:
         "success": False,
         "error": f"Failed to import coppeliasim_zmqremoteapi_client: {err}. Run setup_env.sh first."
     }))
-    sys.exit(1)
+SNAPSHOT_PATH = Path("/tmp/coppelia_snapshot.png")
+OBSERVER_CAM_NAME = "Agent_Observer_Cam"
+
+# Calibrated camera coordinates covering full 15x15m - 20x20m scenes looking at origin:
+CALIBRATED_CAM_POS = [9.0, -9.0, 7.5]
+CALIBRATED_CAM_ROT = [-2.1588, -0.6940, 2.7385]
+CALIBRATED_FOV_DEG = 65.0
 
 from PIL import Image
 
@@ -111,33 +117,29 @@ def launch_coppelia(headless: bool = False, timeout: int = 25):
 
 
 def ensure_observer_camera(sim):
-    """Ensure floating Agent_Observer_Cam exists in scene with elevated perspective."""
+    """Ensure floating Agent_Observer_Cam exists in scene with calibrated perspective."""
     cam_handle = sim.getObject(f"/{OBSERVER_CAM_NAME}", {"noError": True})
     if cam_handle == -1:
-        # options: bit 0 (1): explicit handling, bit 1 (2): perspective => 3
-        int_params = [640, 480, 0, 0]
-        float_params = [0.1, 80.0, 65.0 * 3.14159 / 180.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        int_params = [1024, 768, 0, 0] # 1024x768 clear resolution
+        float_params = [0.1, 100.0, CALIBRATED_FOV_DEG * 3.14159265 / 180.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         cam_handle = sim.createVisionSensor(3, int_params, float_params)
         sim.setObjectAlias(cam_handle, OBSERVER_CAM_NAME)
-        # Position elevated isometric: [x=10, y=-10, z=12]
-        sim.setObjectPosition(cam_handle, -1, [10.0, -10.0, 12.0])
-        # Orientation pointing down towards center
-        sim.setObjectOrientation(cam_handle, -1, [0.85, 0.60, -0.60])
+
+    # Always enforce the calibrated position and orientation
+    sim.setObjectPosition(cam_handle, -1, CALIBRATED_CAM_POS)
+    sim.setObjectOrientation(cam_handle, -1, CALIBRATED_CAM_ROT)
     return cam_handle
 
 
 def capture_snapshot(sim, output_path: Path = SNAPSHOT_PATH) -> str:
-    """Capture RGB frame from Agent_Observer_Cam and save to disk."""
+    """Capture RGB frame from Agent_Observer_Cam and save cleanly to disk."""
     cam_handle = ensure_observer_camera(sim)
     sim.handleVisionSensor(cam_handle)
     img_bytes, resolution = sim.getVisionSensorImg(cam_handle)
-    width, height = resolution[0], resolution[1]
-
-    img = Image.frombytes("RGB", (width, height), bytes(img_bytes))
-    img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(output_path), "PNG")
+    # Native CoppeliaSim saveImage for exact RGB encoding and zero distortion
+    sim.saveImage(img_bytes, resolution, 0, str(output_path), -1)
     return str(output_path)
 
 def make_load_robot_fn(sim):
