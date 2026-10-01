@@ -146,16 +146,17 @@ def ensure_topdown_camera(sim):
     return ensure_camera(sim, TOPDOWN_CAM_NAME, TOPDOWN_CAM_POS, TOPDOWN_CAM_ROT, TOPDOWN_FOV_DEG)
 
 def auto_frame_gui_camera(sim):
-    """Auto-frame GUI DefaultCamera from elevated perspective outside scene bounds.
-    Prevents user GUI viewport from getting trapped inside solid walls (grey void).
+    """Auto-frame GUI DefaultCamera to Bird's-Eye Top-Down view directly above board.
+    Positions GUI DefaultCamera looking straight down at the entire board without clipping.
     """
     try:
         gui_cam = sim.getObject('/DefaultCamera', {'noError': True})
         if gui_cam == -1:
             return
 
+        # Calculate extent of scene to adjust height if scene is large
         shapes = sim.getObjectsInTree(sim.handle_scene, sim.object_shape_type, 0)
-        max_r = 6.0
+        max_r = 5.0
         for s in shapes:
             if s == 13: # skip default floor
                 continue
@@ -164,10 +165,11 @@ def auto_frame_gui_camera(sim):
             if r > max_r:
                 max_r = r
 
-        cam_dist = max(max_r * 1.6, 9.0)
-        cam_height = max(cam_dist * 0.85, 7.5)
-        sim.setObjectPosition(gui_cam, -1, [cam_dist * 0.7, -cam_dist * 0.7, cam_height])
-        sim.setObjectOrientation(gui_cam, -1, [-2.1588, -0.6940, 2.7385])
+        # Set height dynamically based on scene radius (minimum 15m)
+        cam_z = max(max_r * 2.2, 15.0)
+        sim.setObjectPosition(gui_cam, -1, [0.0, 0.0, cam_z])
+        # Exact top-down rotation: pointing straight down (-Z)
+        sim.setObjectOrientation(gui_cam, -1, [3.14159265, 0.0, 0.0])
     except Exception:
         pass
 
