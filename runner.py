@@ -32,17 +32,21 @@ except ImportError as err:
         "error": f"Failed to import coppeliasim_zmqremoteapi_client: {err}. Run setup_env.sh first."
     }))
 SNAPSHOT_PATH = Path("/tmp/coppelia_snapshot.png")
+TOPDOWN_SNAPSHOT_PATH = Path("/tmp/coppelia_topdown.png")
 OBSERVER_CAM_NAME = "Agent_Observer_Cam"
+TOPDOWN_CAM_NAME = "Agent_TopDown_Cam"
 
-# Calibrated camera coordinates covering full 15x15m - 20x20m scenes looking at origin:
+# Calibrated isometric camera (diagonal perspective view):
 CALIBRATED_CAM_POS = [9.0, -9.0, 7.5]
 CALIBRATED_CAM_ROT = [-2.1588, -0.6940, 2.7385]
 CALIBRATED_FOV_DEG = 65.0
 
-from PIL import Image
+# Calibrated top-down camera (bird's-eye view looking straight down at simulation board):
+TOPDOWN_CAM_POS = [0.0, 0.0, 15.0]
+TOPDOWN_CAM_ROT = [3.14159265, 0.0, 0.0]
+TOPDOWN_FOV_DEG = 70.0
 
-SNAPSHOT_PATH = Path("/tmp/coppelia_snapshot.png")
-OBSERVER_CAM_NAME = "Agent_Observer_Cam"
+from PIL import Image
 
 # Standard pre-built model aliases mapped to relative paths under models/
 ROBOT_ALIASES = {
@@ -116,31 +120,46 @@ def launch_coppelia(headless: bool = False, timeout: int = 25):
     return False
 
 
-def ensure_observer_camera(sim):
-    """Ensure floating Agent_Observer_Cam exists in scene with calibrated perspective."""
-    cam_handle = sim.getObject(f"/{OBSERVER_CAM_NAME}", {"noError": True})
+def ensure_camera(sim, name: str, pos: list, rot: list, fov_deg: float):
+    """Ensure a calibrated vision sensor exists in the scene."""
+    cam_handle = sim.getObject(f"/{name}", {"noError": True})
     if cam_handle == -1:
-        int_params = [1024, 768, 0, 0] # 1024x768 clear resolution
-        float_params = [0.1, 100.0, CALIBRATED_FOV_DEG * 3.14159265 / 180.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        int_params = [1024, 768, 0, 0] # 1024x768 resolution
+        float_params = [0.1, 100.0, fov_deg * 3.14159265 / 180.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         cam_handle = sim.createVisionSensor(3, int_params, float_params)
-        sim.setObjectAlias(cam_handle, OBSERVER_CAM_NAME)
+        sim.setObjectAlias(cam_handle, name)
 
-    # Always enforce the calibrated position and orientation
-    sim.setObjectPosition(cam_handle, -1, CALIBRATED_CAM_POS)
-    sim.setObjectOrientation(cam_handle, -1, CALIBRATED_CAM_ROT)
+    sim.setObjectPosition(cam_handle, -1, pos)
+    sim.setObjectOrientation(cam_handle, -1, rot)
     return cam_handle
 
 
-def capture_snapshot(sim, output_path: Path = SNAPSHOT_PATH) -> str:
-    """Capture RGB frame from Agent_Observer_Cam and save cleanly to disk."""
-    cam_handle = ensure_observer_camera(sim)
+def ensure_observer_camera(sim):
+    """Ensure floating isometric perspective camera exists."""
+    return ensure_camera(sim, OBSERVER_CAM_NAME, CALIBRATED_CAM_POS, CALIBRATED_CAM_ROT, CALIBRATED_FOV_DEG)
+
+
+def ensure_topdown_camera(sim):
+    """Ensure bird's-eye top-down camera exists directly above board looking down."""
+    return ensure_camera(sim, TOPDOWN_CAM_NAME, TOPDOWN_CAM_POS, TOPDOWN_CAM_ROT, TOPDOWN_FOV_DEG)
+
+
+def capture_snapshot(sim, output_path: Path = SNAPSHOT_PATH, cam_type: str = "isometric") -> str:
+    """Capture RGB frame from specified camera and save cleanly to disk."""
+    cam_handle = ensure_topdown_camera(sim) if cam_type == "topdown" else ensure_observer_camera(sim)
     sim.handleVisionSensor(cam_handle)
     img_bytes, resolution = sim.getVisionSensorImg(cam_handle)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    # Native CoppeliaSim saveImage for exact RGB encoding and zero distortion
     sim.saveImage(img_bytes, resolution, 0, str(output_path), -1)
     return str(output_path)
+
+
+def capture_all_snapshots(sim):
+    """Capture both isometric and top-down views."""
+    iso_path = capture_snapshot(sim, SNAPSHOT_PATH, "isometric")
+    top_path = capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown")
+    return iso_path, top_path
 
 def make_load_robot_fn(sim):
     """Factory creating the load_robot helper injected into agent code."""
@@ -191,9 +210,11 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "client": client,
         "sim": sim,
         "load_robot": load_robot_fn,
-        "capture_snapshot": lambda: capture_snapshot(sim, SNAPSHOT_PATH),
+        "capture_snapshot": lambda: capture_snapshot(sim, SNAPSHOT_PATH, "isometric"),
+        "capture_topdown": lambda: capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown"),
         "ROBOT_ALIASES": list(ROBOT_ALIASES.keys())
     }
+
 
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
@@ -208,9 +229,10 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             exec_error = str(e)
 
     snapshot_file = None
+    topdown_file = None
     if take_snapshot and exec_success:
         try:
-            snapshot_file = capture_snapshot(sim, SNAPSHOT_PATH)
+            snapshot_file, topdown_file = capture_all_snapshots(sim)
         except Exception as snap_err:
             stderr_buf.write(f"\n[Warning: Snapshot capture failed: {snap_err}]")
 
@@ -219,7 +241,8 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "stdout": stdout_buf.getvalue(),
         "stderr": stderr_buf.getvalue(),
         "error": exec_error,
-        "snapshot_path": snapshot_file
+        "snapshot_path": snapshot_file,
+        "topdown_path": topdown_file
     }
 
 

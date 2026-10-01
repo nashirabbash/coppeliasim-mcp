@@ -28,13 +28,16 @@ server = MCPServer("coppeliasim")
 TOOL_DESCRIPTION = """Execute Python code directly inside CoppeliaSim simulator.
 Auto-launches simulator if closed, runs physics/scene code, auto-captures camera snapshot to /tmp/coppelia_snapshot.png, and returns execution result in ONE single call.
 
-MANDATORY VISUAL EVALUATION RULE (AGENT'S EYES):
-Every call returns `"snapshot": "/tmp/coppelia_snapshot.png"`.
-YOU MUST inspect and evaluate this snapshot visually:
-1. Verify shapes/walls/roofs are aligned and not collapsing under gravity.
-2. Verify the robot spawned upright on the floor and not trapped inside walls.
-3. If the image reveals flaws, self-correct your script coordinates immediately!
-DO NOT conclude the task based solely on code exit status; check the image first!
+MANDATORY DUAL-EYE VISUAL EVALUATION RULE (AGENT'S EYES):
+Every call returns TWO synchronized camera snapshots:
+1. `"snapshot": "/tmp/coppelia_snapshot.png"` -> ISOMETRIC ELEVATED PERSPECTIVE VIEW (checks wall heights, roofs, robot upright tilt, 3D clearance).
+2. `"topdown_snapshot": "/tmp/coppelia_topdown.png"` -> BIRD'S-EYE TOP-DOWN VIEW directly above the simulation board (checks 2D layout, distance to obstacles, room boundaries, robot navigation heading).
+
+YOU MUST visually evaluate both views:
+1. Inspect topdown view to verify board layout, room boundaries, and robot position.
+2. Inspect isometric view to verify height, vertical alignment, and physical stability.
+3. If either snapshot shows misalignments, self-correct your script coordinates immediately!
+DO NOT conclude the task based solely on code exit status; check the images first!
 
 INJECTED OBJECTS IN CODE:
 - `sim`: CoppeliaSim ZeroMQ API module.
@@ -105,8 +108,9 @@ async def coppelia_step(code: str = "", reset: bool = False, headless: bool = Fa
         "stdout": result["stdout"].strip(),
         "stderr": result["stderr"].strip(),
         "error": result["error"],
-        "snapshot": result["snapshot_path"] if result["snapshot_path"] and Path(result["snapshot_path"]).exists() else None,
-        "eye_evaluation_directive": "EVALUATE THIS SNAPSHOT: Read /tmp/coppelia_snapshot.png to inspect visual scene layout and robot placement before replying.",
+        "snapshot": result["snapshot_path"] if result.get("snapshot_path") and Path(result["snapshot_path"]).exists() else None,
+        "topdown_snapshot": result["topdown_path"] if result.get("topdown_path") and Path(result["topdown_path"]).exists() else None,
+        "eye_evaluation_directive": "EVALUATE YOUR EYES: Read /tmp/coppelia_topdown.png (top-down board view) and /tmp/coppelia_snapshot.png (isometric 3D view) to verify scene layout and robot placement before replying.",
         "available_robots": list(ROBOT_ALIASES.keys()) if not result["success"] else None
     }
 
