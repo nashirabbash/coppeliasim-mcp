@@ -43,7 +43,7 @@ CALIBRATED_FOV_DEG = 65.0
 
 # Calibrated top-down camera (bird's-eye view looking straight down at simulation board):
 TOPDOWN_CAM_POS = [0.0, 0.0, 20.0]
-TOPDOWN_CAM_ROT = [0, 0.0, 0.0]
+TOPDOWN_CAM_ROT = [3.14159, 0.0, 0.0]
 TOPDOWN_FOV_DEG = 90.0
 
 from PIL import Image
@@ -264,6 +264,14 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
     try:
         client = RemoteAPIClient(host=host, port=port)
         sim = client.require("sim")
+        try:
+            simIK = client.require("simIK")
+        except Exception:
+            simIK = None
+        try:
+            simOMPL = client.require("simOMPL")
+        except Exception:
+            simOMPL = None
     except Exception as err:
         return {
             "success": False,
@@ -291,14 +299,14 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
     env = {
         "client": client,
         "sim": sim,
+        "simIK": simIK,
+        "simOMPL": simOMPL,
         "load_robot": load_robot_fn,
         "capture_snapshot": lambda: capture_snapshot(sim, SNAPSHOT_PATH, "isometric"),
         "capture_topdown": lambda: capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown"),
         "ROBOT_ALIASES": list(ROBOT_ALIASES.keys()),
         "get_floor_info": lambda: get_floor_info(sim),
         "get_scene_hierarchy": lambda: get_scene_hierarchy(sim),
-
-
     }
 
 

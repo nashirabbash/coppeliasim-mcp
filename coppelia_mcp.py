@@ -55,6 +55,8 @@ ALWAYS inspect `scene_objects` before creating/spawning:
 
 INJECTED OBJECTS IN CODE:
 - `sim`: CoppeliaSim ZeroMQ API module.
+- `simIK`: CoppeliaSim Inverse/Forward Kinematics solver module.
+- `simOMPL`: Open Motion Planning Library module (RRT, RRT*, PRM path planners).
 - `load_robot(alias, position=[x,y,z], orientation=[a,b,g])`: Loads robot model.
   Valid aliases: ['pioneer', 'youbot', 'hexapod', 'ant_hexapod', 'omni', 'quadcopter', 'asti', 'panda', 'ur5', 'ur10', 'vacuum', 'epuck'].
 - `get_scene_hierarchy()`: Returns current active user models and shapes in the scene.
@@ -77,13 +79,23 @@ EXACT API CHEAT-SHEET (DO NOT SEARCH OR GUESS - USE THESE DIRECTLY):
    - Find object by name: `h = sim.getObject('/ObjectName', {'noError': True})`
    - Remove object: `sim.removeObject(handle)`
 
-3. Simulation & Motors:
+3. Collision & Distance Detection:
+   - Collision check: `result, collPair = sim.checkCollision(entity1Handle, entity2Handle)` # 1 = colliding, 0 = clear
+   - Distance check: `result, distData = sim.checkDistance(entity1Handle, entity2Handle, threshold)`
+
+4. Path & Motion Planning (simOMPL & simIK):
+   - simOMPL Task: `task = simOMPL.createTask('task_name')`
+   - Set Algorithm: `simOMPL.setAlgorithm(task, simOMPL.Algorithm.RRTConnect)` # or RRTstar, PRM
+   - Compute Path: `solved, path = simOMPL.compute(task, maxTime=4.0)`
+   - simIK Solver: `env = simIK.createEnvironment(); simIK.addElementFromScene(env, ikGroup, tip, target, base)`
+   - Native Path Interpolation: `pathHandle = sim.createPath(ctrlPoints, options)`
+
+5. Simulation & Motors:
    - Start simulation: `sim.startSimulation()`
    - Stop simulation: `sim.stopSimulation()`
    - Set motor velocity: `sim.setJointTargetVelocity(jointHandle, float_val)`
    - Read proximity sensor: `detected, dist, pt, obj, normal = sim.readProximitySensor(sensorHandle)`
 
-EXAMPLE READY-TO-RUN CODE:
 ```python
 sim.stopSimulation()
 # House floor
