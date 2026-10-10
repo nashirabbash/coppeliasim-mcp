@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoppeliaSim tool execution flow</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; background: #f5f5f5; color: #2d3142; font-family: 'Geist', sans-serif; padding: 32px; }
+    main { max-width: 1280px; min-width: 0; margin: auto; }
+    h1 { font: 400 28px 'Instrument Serif', serif; margin: 0 0 16px; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CoppeliaSim tool execution flow</h1>
+  <div class="diagram-container">
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="execution-flow-title execution-flow-desc">
+      <title id="execution-flow-title">CoppeliaSim tool execution flow</title>
+      <desc id="execution-flow-desc">A tool call executes Python in the simulator; code failures return an error, while successful code attempts camera capture and returns paths only when images are saved.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+      </defs>
+      <rect width="1280" height="720" fill="#f5f5f5"/>
+      <text x="80" y="68" font-family="'Geist Mono', monospace" font-size="8" letter-spacing="1.6" fill="#4f5d75">EXECUTION &amp; OBSERVATION</text>
+      <text x="80" y="112" font-family="'Instrument Serif', serif" font-size="28" fill="#2d3142">From Python to visual evidence</text>
+      <text x="80" y="144" font-family="'Geist', sans-serif" font-size="12" fill="#4f5d75">Code success and snapshot success are separate outcomes.</text>
+
+      <!-- Call path, then distinct failure exits. -->
+      <line x1="200" y1="224" x2="200" y2="260" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="200" y1="324" x2="200" y2="352" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="200" y1="424" x2="200" y2="452" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <line x1="200" y1="516" x2="200" y2="532" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="200" y1="604" x2="200" y2="620" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="260" y1="388" x2="448" y2="388" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 260,568 H 336 Q 344,568 344,560 V 504 Q 344,496 352,496 H 448" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="218" y="428" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="234" y="437" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="8" fill="#4f5d75">YES</text>
+      <rect x="218" y="604" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="234" y="613" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="8" fill="#4f5d75">YES</text>
+      <rect x="328" y="364" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="344" y="373" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="8" fill="#4f5d75">NO</text>
+      <rect x="392" y="472" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="408" y="481" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="8" fill="#4f5d75">NO</text>
+
+      <rect x="104" y="168" width="192" height="56" rx="20" fill="#f5f5f5"/><rect x="104" y="168" width="192" height="56" rx="20" fill="rgba(79,93,117,0.10)" stroke="#7a8399"/>
+      <text x="200" y="201" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">coppelia_step call</text>
+
+      <rect x="104" y="260" width="192" height="64" rx="6" fill="#f5f5f5"/><rect x="104" y="260" width="192" height="64" rx="6" fill="#ffffff" stroke="#2d3142"/>
+      <text x="200" y="288" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Execute code</text>
+      <text x="200" y="308" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">runner.py / sim</text>
+
+      <polygon points="200,352 260,388 200,424 140,388" fill="#f5f5f5"/><polygon points="200,352 260,388 200,424 140,388" fill="#ffffff" stroke="#2d3142"/>
+      <text x="200" y="392" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Code OK?</text>
+
+      <rect x="448" y="356" width="216" height="64" rx="6" fill="#f5f5f5"/><rect x="448" y="356" width="216" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/>
+      <text x="556" y="385" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Return code error</text>
+      <text x="556" y="405" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">success: false</text>
+
+      <rect x="104" y="452" width="192" height="64" rx="6" fill="#f5f5f5"/><rect x="104" y="452" width="192" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+      <text x="200" y="480" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Capture two views</text>
+      <text x="200" y="500" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">top-down + isometric</text>
+
+      <polygon points="200,532 260,568 200,604 140,568" fill="#f5f5f5"/><polygon points="200,532 260,568 200,604 140,568" fill="#ffffff" stroke="#2d3142"/>
+      <text x="200" y="572" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Images OK?</text>
+
+      <rect x="448" y="464" width="216" height="64" rx="6" fill="#f5f5f5"/><rect x="448" y="464" width="216" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/>
+      <text x="556" y="493" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Return warning</text>
+      <text x="556" y="513" text-anchor="middle" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">no snapshot paths</text>
+
+      <rect x="104" y="620" width="192" height="56" rx="20" fill="#f5f5f5"/><rect x="104" y="620" width="192" height="56" rx="20" fill="#ffffff" stroke="#2d3142"/>
+      <text x="200" y="653" text-anchor="middle" font-family="'Geist', sans-serif" font-size="12" font-weight="600" fill="#2d3142">Return image paths</text>
+
+      <line x1="760" y1="240" x2="1160" y2="240" stroke="#bfc0c0" stroke-width="0.8"/>
+      <text x="760" y="272" font-family="'Geist Mono', monospace" font-size="8" letter-spacing="1.4" fill="#4f5d75">WHEN CAPTURE SUCCEEDS</text>
+      <text x="760" y="308" font-family="'Geist', sans-serif" font-size="12" fill="#2d3142">Inspect both images before claiming the scene is correct.</text>
+      <text x="760" y="338" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">/tmp/coppelia_topdown.png</text>
+      <text x="760" y="360" font-family="'Geist Mono', monospace" font-size="9" fill="#4f5d75">/tmp/coppelia_snapshot.png</text>
+      <line x1="760" y1="448" x2="1160" y2="448" stroke="#bfc0c0" stroke-width="0.8"/>
+      <text x="760" y="480" font-family="'Geist Mono', monospace" font-size="8" letter-spacing="1.4" fill="#4f5d75">IMPORTANT</text>
+      <text x="760" y="516" font-family="'Geist', sans-serif" font-size="12" fill="#2d3142">A successful script can still create a broken scene.</text>
+      <text x="760" y="542" font-family="'Geist', sans-serif" font-size="12" fill="#4f5d75">Use images to verify placement and physical stability.</text>
+    </svg>
+  </div>
+</main>
+</body>
+</html>

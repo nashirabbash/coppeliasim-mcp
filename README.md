@@ -1,152 +1,125 @@
-# CoppeliaSim MCP Server 🤖🚀
+<div align="center">
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![MCP Compatible](https://img.shields.io/badge/MCP-1.0%20%2F%202.0-blue)](https://modelcontextprotocol.io)
+# CoppeliaSim MCP Server
 
-High-efficiency, token-optimized **Model Context Protocol (MCP)** server providing direct integration between AI agents (**Claude Desktop**, **omp**, **Cursor**, **Windsurf**, **Zed**) and the **CoppeliaSim** robotics simulator.
+**Build and inspect CoppeliaSim scenes from an AI assistant through one MCP tool.**
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## ✨ Features
+</div>
 
-- **⚡ Token-Optimized (`coppelia_step`)**: Single unified tool call replacing fragmented multi-round trips. Auto-launches, runs code, extracts floor & hierarchy, and captures multimodal snapshots in **one request**.
-- **👁️ Dual-Camera Visual Eyes**:
-  - **`topdown_snapshot`** (`/tmp/coppelia_topdown.png`): Bird's-eye view above the simulation board to verify 2D placement, room boundaries, and navigation.
-  - **`snapshot`** (`/tmp/coppelia_snapshot.png`): Elevated isometric 3D perspective to verify object heights, wall alignment, and robot upright stability.
-- **📐 Auto Floor & Scene Hierarchy Awareness**: Returns exact floor bounding box (`size_x`, `size_y`, `surface_z`) and existing scene objects (`scene_objects`) on every turn to prevent duplicate models.
-- **🤖 Built-in Robot Catalog**: Injected `load_robot(alias, [x, y, z])` supporting pre-tested models:
-  - Mobile: `'pioneer'`, `'youbot'`, `'hexapod'`, `'ant_hexapod'`, `'omni'`, `'quadcopter'`, `'asti'`, `'epuck'`, `'vacuum'`
-  - Manipulators: `'panda'`, `'ur5'`, `'ur10'`
-- **🛡️ Self-Documenting Zero-Discovery**: Complete API cheat-sheet and constants embedded in tool schema so agents do not waste tokens guessing functions.
+Connect an MCP client to CoppeliaSim's ZeroMQ Remote API. `coppelia_step` runs Python against the current scene and returns execution output, floor information, scene objects, and paths to top-down and isometric snapshots. The scene persists between calls, so an agent can inspect and refine it without recreating everything.
 
----
+![Architecture: MCP client calls the server, runner uses CoppeliaSim, and snapshots are saved locally](docs/images/architecture.png)
 
-## 📋 Prerequisites
+[View editable architecture diagram](docs/images/architecture.html).
 
-1. **CoppeliaSim** (v4.3+ recommended, Linux / macOS / Windows) with ZeroMQ Remote API enabled (default port `23000`).
-2. **Python >= 3.10**.
+## What you can do
 
----
+- Create shapes, load bundled robot models by alias, and control simulation with CoppeliaSim's `sim` API.
+- Inspect the current floor and scene hierarchy before adding objects.
+- Check both camera views after each successful execution: `/tmp/coppelia_topdown.png` and `/tmp/coppelia_snapshot.png`.
+- Use the same runner directly from the command line or through an MCP client.
 
-## 🚀 Installation & Setup
+## Get started
 
-Clone the repository and install dependencies in an isolated virtual environment:
+### Requirements
+
+- Python 3.10 or newer and [CoppeliaSim](https://www.coppeliarobotics.com/) with its ZeroMQ Remote API addon available on port `23000`.
+- A local CoppeliaSim installation with the bundled Python client and robot models. Set `COPPELIASIM_ROOT` to its installation directory if it is not at `/home/myarchlinux/.local/opt/coppeliaSim`.
+- An MCP-compatible client for agent use; the command-line runner works without one.
+
+### Install
 
 ```bash
 git clone https://github.com/nashirabbash/coppeliasim-mcp.git
 cd coppeliasim-mcp
-
-# Setup environment
-chmod +x setup_env.sh
-./setup_env.sh
+bash setup_env.sh
+.venv/bin/python -m pip install -e .
 ```
 
----
+`setup_env.sh` creates `.venv` and installs runner dependencies; `pip install -e .` also installs the MCP server dependency. Start CoppeliaSim yourself and confirm its ZeroMQ Remote API addon is listening on port `23000`. This is the portable route: automatic launch currently uses installation paths hard-coded for the original author's machine.
 
-## 🔌 Configuration Across Agent Harnesses
+For installations elsewhere, set `COPPELIASIM_ROOT` before running the CLI or starting the MCP client (or set it in the client's server environment):
 
-### 1. `omp` Harness
-Add to `~/.omp/agent/mcp.json`:
+```bash
+export COPPELIASIM_ROOT=/path/to/coppeliaSim
+```
+
+Try the local runner without changing the scene:
+
+```bash
+./coppelia_run --code 'print(get_floor_info())'
+```
+
+It prints JSON with `success`, captured output, floor and scene objects, and snapshot paths when image capture succeeds. Open **both** snapshot files to check actual placement; `success: true` only confirms Python code ran, not that geometry or physics is correct. If no simulator is connected, the command reports a connection error instead.
+
+### Connect an MCP client
+
+Find the absolute path to this checkout, then replace `/absolute/path/to/coppeliasim-mcp` below. For `omp`, add this server to `~/.omp/agent/mcp.json` (merge it with existing `mcpServers` entries):
+
 ```json
 {
   "mcpServers": {
     "coppeliasim": {
       "type": "stdio",
-      "command": "/path/to/coppeliasim-mcp/.venv/bin/python",
-      "args": [
-        "/path/to/coppeliasim-mcp/coppelia_mcp.py"
-      ],
+      "command": "/absolute/path/to/coppeliasim-mcp/.venv/bin/python",
+      "args": ["/absolute/path/to/coppeliasim-mcp/coppelia_mcp.py"],
       "enabled": true
     }
   }
 }
 ```
 
-### 2. Claude Desktop
-Add to `~/.config/Claude/claude_desktop_config.json` (Linux) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
-```json
-{
-  "mcpServers": {
-    "coppeliasim": {
-      "command": "/path/to/coppeliasim-mcp/.venv/bin/python",
-      "args": [
-        "/path/to/coppeliasim-mcp/coppelia_mcp.py"
-      ]
-    }
-  }
-}
-```
+For Claude Desktop, use its `claude_desktop_config.json` (`~/.config/Claude/` on Linux or `~/Library/Application Support/Claude/` on macOS) with the same `command` and `args` under `mcpServers`; omit `type` and `enabled`. Other stdio MCP clients can use the same executable and script paths. Restart your client after editing its configuration.
 
-### 3. Cursor / Windsurf / Zed
-Add to your workspace `.cursor/mcp.json` or global settings:
-```json
-{
-  "mcpServers": {
-    "coppeliasim": {
-      "command": "/path/to/coppeliasim-mcp/.venv/bin/python",
-      "args": [
-        "/path/to/coppeliasim-mcp/coppelia_mcp.py"
-      ]
-    }
-  }
-}
-```
+## Use the tool
 
----
-
-## 🛠️ Tool Schema: `coppelia_step`
-
-The agent interacts via a single function:
+Ask your client to call `coppelia_step` with Python source in `code`. Example:
 
 ```python
-coppelia_step(
-    code: str = "",         # Python code manipulating scene (sim.* and load_robot)
-    reset: bool = False,    # If True, stops simulation before execution
-    headless: bool = False  # If True, launches simulator without GUI
-)
+# coppelia_step(code="...")
+print(get_floor_info())
+print(get_scene_hierarchy())
+robot = load_robot('pioneer', [0.0, 0.0, 0.3])
+print(sim.getObjectPosition(robot, -1))
 ```
 
-### Injected Environment
-Inside the `code` string, the script directly accesses:
-- `sim`: CoppeliaSim ZeroMQ API module.
-- `load_robot(alias, position=[x, y, z])`: Loads pre-built robot model.
-- `get_floor_info()`: Current floor boundaries and elevation.
-- `get_scene_hierarchy()`: Currently active scene shapes and models.
-- `capture_snapshot()`: Captures camera frame.
+Check `scene_objects` first so repeated calls do not load another copy of the robot. `load_robot` uses `.ttm` models under `COPPELIASIM_ROOT/models`; aliases include `pioneer`, `youbot`, `hexapod`, `ant_hexapod`, `omni`, `quadcopter`, `epuck`, `vacuum`, `panda`, `ur5`, and `ur10`. Available models depend on your CoppeliaSim installation; run `./coppelia_run --list-robots` for the full alias map.
 
-### Response Payload
-```json
-{
-  "success": true,
-  "stdout": "...",
-  "floor": {
-    "size_x": 5.0,
-    "size_y": 5.0,
-    "bounds_x": [-2.5, 2.5],
-    "bounds_y": [-2.5, 2.5],
-    "surface_z": 0.0
-  },
-  "scene_objects": [
-    {"name": "PioneerP3DX", "handle": 25, "is_model": true, "pos": [0.0, 0.0, 0.3]}
-  ],
-  "snapshot": "/tmp/coppelia_snapshot.png",
-  "topdown_snapshot": "/tmp/coppelia_topdown.png",
-  "eye_evaluation_directive": "EVALUATE YOUR EYES: Read /tmp/coppelia_topdown.png and /tmp/coppelia_snapshot.png before replying."
-}
-```
+| Parameter | Default | Behavior |
+| --- | --- | --- |
+| `code` | `""` | Python executed with `sim`, `client`, `simIK`, `simOMPL`, `load_robot`, `get_floor_info`, `get_scene_hierarchy`, and snapshot helpers. Empty code captures the current scene. |
+| `reset` | `false` | Stops a running simulation before executing code; **does not clear scene objects**. |
+| `headless` | `false` | Requests headless mode only if the server needs to launch CoppeliaSim. |
 
----
+Response is JSON text containing `success`, `stdout`, and, when available, `stderr`, `error`, `floor`, `scene_objects`, `snapshot`, and `topdown_snapshot`. Snapshot paths are omitted if capture fails. Inspect both views before treating a scene as finished.
 
-## 📊 Benchmark & Evaluation
+![Execution flow: code errors, successful snapshot capture, and snapshot warnings return different results](docs/images/execution-flow.png)
 
-Run the automated evaluation benchmark:
+[View editable execution-flow diagram](docs/images/execution-flow.html).
+
+### Command-line runner
+
 ```bash
-./run_benchmark.sh
+./coppelia_run --code 'print(get_scene_hierarchy())'
+./coppelia_run --file path/to/scene.py
+./coppelia_run --reset --code 'sim.startSimulation()'
 ```
-Measures token consumption, tool invocation count, physical scene reality, and visual validity.
 
----
+Runner accepts `--host` and `--port` for an existing remote simulator; MCP tool uses its default localhost port `23000`. `--reset` stops simulation, not object removal. For CLI options, run `./coppelia_run --help`.
 
-## 📜 License
+## Troubleshooting
 
-MIT License. See [LICENSE](LICENSE) for details.
+- **Cannot connect to `localhost:23000`:** Start CoppeliaSim, enable its ZeroMQ Remote API addon, and verify port `23000`. Automatic launch scripts assume author-specific absolute paths; launch manually on other machines.
+- **`Failed to import coppeliasim_zmqremoteapi_client`:** Check `COPPELIASIM_ROOT` points to the CoppeliaSim directory containing `programming/zmqRemoteApi/clients/python/src`, then rerun with the project virtual environment.
+- **Robot model not found:** Check the model exists beneath `COPPELIASIM_ROOT/models`. Use `./coppelia_run --list-robots` to inspect alias paths or pass an existing `.ttm` path to `load_robot`.
+- **No snapshots:** Check `stderr` in the tool response. Snapshots are written to `/tmp` only after successful code execution and capture; they are local to the machine running the server.
+
+## Contributing
+
+Issues and pull requests are welcome at [github.com/nashirabbash/coppeliasim-mcp](https://github.com/nashirabbash/coppeliasim-mcp). For local development, use the install steps above and verify basic CLI behavior with `./coppelia_run --list-robots`. A live simulator is required to verify scene changes and camera output. The optional `./run_benchmark.sh` exercises agent-driven scenes and requires a configured `omp` client; it changes the active simulation, so use a disposable scene.
+
+## License
+
+[MIT](LICENSE).
