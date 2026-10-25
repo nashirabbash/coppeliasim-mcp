@@ -24,6 +24,7 @@ from scene_catalog import search_catalog
 from scene_io import run_scene_action
 from sim_run import run_simulation
 from motion_tools import run_motion, runtime_health
+from json_log import log
 from trajectory_tools import run_trajectory
 from p1_mcp_tools import register_p1_tools
 from p2_mcp_tools import register_p2_tools
