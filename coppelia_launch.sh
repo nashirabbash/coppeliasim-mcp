@@ -1,46 +1,79 @@
 #!/usr/bin/env bash
-# coppelia_launch.sh: Launch or verify running CoppeliaSim instance
+# Launch the native executable; vendor wrappers may terminate unrelated instances.
+set -euo pipefail
 
-HEADLESS=false
-if [ "${1:-}" = "--headless" ]; then
-    HEADLESS=true
-fi
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${COPPELIASIM_ROOT:-$HOME/.local/opt/coppeliaSim}"
+PYTHON="$DIR/.venv/bin/python"
+export COPPELIASIM_ROOT="$ROOT"
+export QT_QPA_PLATFORM=xcb
+export DISPLAY="${DISPLAY:-:0}"
+export LD_LIBRARY_PATH="$ROOT${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# Check if port 23000 is open and answering
-if ss -tln | grep -q ":23000 "; then
-    echo "CoppeliaSim ZeroMQ API is already active on port 23000."
+# Verify RPC rather than treating an open TCP socket as a ready simulator.
+probe() {
+    timeout 3 "$PYTHON" -c '
+from runner import RemoteAPIClient
+client = RemoteAPIClient()
+sim = client.require("sim")
+assert sim.getInt32Param(sim.intparam_program_version) > 0
+' >/dev/null 2>&1
+}
+
+cd "$DIR"
+if probe; then
+    echo '{"level":"info","event":"simulator.already_ready","port":23000}'
     exit 0
 fi
+ROS2_MODE="${COPPELIASIM_ROS2_MODE:-auto}"
+ROS2_IMAGE="${COPPELIASIM_ROS2_IMAGE:-coppeliasim-ros2:humble}"
+case "$ROS2_MODE" in
+    docker)
+        exec "$DIR/coppelia_ros2_container.sh" start
+        ;;
+    auto)
+        if docker image inspect "$ROS2_IMAGE" >/dev/null 2>&1; then
+            exec "$DIR/coppelia_ros2_container.sh" start
+        fi
+        ;;
+    native)
+        ;;
+    *)
+        echo "{\"level\":\"error\",\"event\":\"simulator.invalid_ros2_mode\",\"mode\":\"$ROS2_MODE\"}" >&2
+        exit 2
+        ;;
+esac
 
-COPPELIA_BIN="/home/myarchlinux/.local/bin/coppeliaSim"
-if [ ! -x "$COPPELIA_BIN" ]; then
-    COPPELIA_BIN="/home/myarchlinux/.local/opt/coppeliaSim/coppeliaSim.sh"
+if [ -n "${COPPELIASIM_ROS2_SETUP:-}" ]; then
+    if [ ! -r "$COPPELIASIM_ROS2_SETUP" ]; then
+        echo "{\"level\":\"error\",\"event\":\"simulator.ros2_setup_missing\",\"path\":\"$COPPELIASIM_ROS2_SETUP\"}" >&2
+        exit 1
+    fi
+    source "$COPPELIASIM_ROS2_SETUP"
 fi
 
-export DISPLAY="${DISPLAY:-:0}"
+export LD_LIBRARY_PATH="$ROOT${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-if [ "$HEADLESS" = true ]; then
-    echo "Launching CoppeliaSim in headless mode..."
-    # -h runs emulated headless; pass -Gws_remote_api=false if needed or keep default
-    nohup "$COPPELIA_BIN" -h </dev/null >/tmp/coppelia_stdout.log 2>&1 &
-else
-    echo "Launching CoppeliaSim with GUI..."
-    nohup "$COPPELIA_BIN" </dev/null >/tmp/coppelia_stdout.log 2>&1 &
+test -x "$ROOT/coppeliaSim"
+"$PYTHON" -c 'import zmq, cbor2'
+ARGS=(-xnone "-Gpython=$PYTHON" -GsimCmd.autoStart=false)
+if [ "${1:-}" = "--headless" ]; then
+    ARGS+=(-h)
 fi
 
-COPPELIA_PID=$!
-echo "CoppeliaSim launched with PID $COPPELIA_PID. Waiting for ZeroMQ port 23000..."
-
-for i in {1..50}; do
-    if ss -tln | grep -q ":23000 "; then
-        # Give remote api a short moment to initialize rpc loop
-        sleep 1.0
-        echo "CoppeliaSim ZeroMQ API is ready on port 23000."
+(
+    cd "$ROOT"
+    exec nohup setsid "$ROOT/coppeliaSim" "${ARGS[@]}"
+) </dev/null >/tmp/coppelia_stdout.log 2>&1 &
+PID=$!
+echo "{\"level\":\"info\",\"event\":\"simulator.launching\",\"pid\":$PID}"
+for ((attempt=0; attempt<25; attempt++)); do
+    if probe; then
+        echo '{"level":"success","event":"simulator.rpc_ready","port":23000}'
         exit 0
     fi
+    kill -0 "$PID" 2>/dev/null || break
     sleep 0.5
 done
-
-echo "Error: CoppeliaSim port 23000 failed to open."
-cat /tmp/coppelia_stdout.log | tail -n 20
+echo '{"level":"error","event":"simulator.launch_failed","log":"/tmp/coppelia_stdout.log"}' >&2
 exit 1

@@ -28,6 +28,7 @@ Connect an MCP client to CoppeliaSim's ZeroMQ Remote API. `coppelia_step` runs P
 - Python 3.10 or newer and [CoppeliaSim](https://www.coppeliarobotics.com/) with its ZeroMQ Remote API addon available on port `23000`.
 - A local CoppeliaSim installation with the bundled Python client and robot models. Set `COPPELIASIM_ROOT` to its installation directory if it is not at `/home/myarchlinux/.local/opt/coppeliaSim`.
 - An MCP-compatible client for agent use; the command-line runner works without one.
+- Docker Engine is only needed for the optional ROS 2 Humble integration.
 
 ### Install
 
@@ -38,7 +39,7 @@ bash setup_env.sh
 .venv/bin/python -m pip install -e .
 ```
 
-`setup_env.sh` creates `.venv` and installs runner dependencies; `pip install -e .` also installs the MCP server dependency. Start CoppeliaSim yourself and confirm its ZeroMQ Remote API addon is listening on port `23000`. This is the portable route: automatic launch currently uses installation paths hard-coded for the original author's machine.
+`setup_env.sh` creates `.venv` and installs runner dependencies; `pip install -e .` also installs the MCP server dependency. `bash coppelia_launch.sh --headless` launches the native simulator with the project Python interpreter and verifies an actual ZeroMQ RPC response before reporting readiness.
 
 For installations elsewhere, set `COPPELIASIM_ROOT` before running the CLI or starting the MCP client (or set it in the client's server environment):
 
@@ -85,19 +86,80 @@ robot = load_robot('pioneer', [0.0, 0.0, 0.3])
 print(sim.getObjectPosition(robot, -1))
 ```
 
-Check `scene_objects` first so repeated calls do not load another copy of the robot. `load_robot` uses `.ttm` models under `COPPELIASIM_ROOT/models`; aliases include `pioneer`, `youbot`, `hexapod`, `ant_hexapod`, `omni`, `quadcopter`, `epuck`, `vacuum`, `panda`, `ur5`, and `ur10`. Available models depend on your CoppeliaSim installation; run `./coppelia_run --list-robots` for the full alias map.
+Check `scene_objects` before creating objects; it contains root nodes with recursive `children`, including every non-system descendant. Each node includes `name`, unique `path`, transient `handle`, object `type`, `is_model`, world `pos`, and `children`. Handles are valid only for the current scene. If response contains `scene_hierarchy_error`, do not assume scene is empty.
 
 | Parameter | Default | Behavior |
 | --- | --- | --- |
-| `code` | `""` | Python executed with `sim`, `client`, `simIK`, `simOMPL`, `load_robot`, `get_floor_info`, `get_scene_hierarchy`, and snapshot helpers. Empty code captures the current scene. |
+| `code` | `""` | Python executed with `sim`, `client`, `simIK`, `simOMPL`, `solve_ik`, `plan_joint_path`, `load_robot`, scene helpers, and snapshot helpers. Empty code captures the current scene. |
 | `reset` | `false` | Stops a running simulation before executing code; **does not clear scene objects**. |
 | `headless` | `false` | Requests headless mode only if the server needs to launch CoppeliaSim. |
+| `diagnostics` | `null` | Optional checks: `{ "kind": "collision", "objects": ["/A", "/B"] }`, `{ "kind": "distance", "objects": ["/A", "/B"], "threshold": 0.1 }`, or `{ "kind": "floor_bounds", "object": "/A" }`. |
+| `timeout` | `30.0` | Maximum seconds for user script execution. Expiry interrupts the script and returns a failed result. |
+Canceling the MCP request terminates the isolated runner process; only the worker is canceled, not the simulator process itself.
 
-Response is JSON text containing `success`, `stdout`, and, when available, `stderr`, `error`, `floor`, `scene_objects`, `snapshot`, and `topdown_snapshot`. Snapshot paths are omitted if capture fails. Inspect both views before treating a scene as finished.
+Response includes JSON text plus image content for each successful snapshot. Paths remain in the JSON response. Diagnostic results use `clear`, `issue`, or `unavailable`; checks inspect the post-script scene without advancing simulation time. Floor-boundary checks test each transformed object bounding-box corner against detected floor XY bounds. Distance checks always return the measured minimum distance and closest points; `threshold` only selects `issue` versus `clear`.
 
 ![Execution flow: code errors, successful snapshot capture, and snapshot warnings return different results](docs/images/execution-flow.png)
 
 [View editable execution-flow diagram](docs/images/execution-flow.html).
+
+### Structured simulation, catalog, and scene tools
+
+`coppelia_simulate` advances the simulation in steps and returns sampled JSON state. It runs the simulator with stepping enabled, then leaves stepping off and the simulation running.
+
+| Parameter | Default | Behavior |
+| --- | --- | --- |
+| `steps` | `100` | Number of steps to run, max `10000`. |
+| `observe` | `null` | Object paths whose absolute positions are sampled, e.g. `["/PioneerP3DX"]`. |
+| `sensors` | `null` | Proximity sensor paths read each sample; returns `detected` and `distance` (`null` when nothing detected). |
+| `sample_every` | `1` | Record a sample every N steps. |
+| `until` | `null` | Stop early when a diagnostic becomes `issue`: `{ "kind": "distance", "objects": ["/A", "/B"], "threshold": 0.1 }` or `collision`/`floor_bounds` as in `coppelia_step`. |
+| `export_path` | `null` | Also write the full result JSON to this path. |
+| `headless` | `false` | Requests headless mode only if the server launches CoppeliaSim. |
+
+Object paths are CoppeliaSim absolute paths. Root objects need a leading slash: `/Shape` resolves, `Shape` returns "Object not found". Result includes `stopped_by` (`steps` or `condition`), `steps_run`, `final_time`, and `samples`.
+
+`coppelia_catalog` searches `.ttm` models and `.ttt` scenes under `COPPELIASIM_ROOT` without contacting the simulator. Parameters: `query` (space-separated terms, all must match path or alias), `kind` (`all`, `model`, or `scene`), `limit` (default `50`). Results include `kind`, `name`, `path`, `relative`, and `alias`.
+
+`coppelia_scene` saves or loads a scene. `action` is `save` or `load`; `path` is the `.ttt` file. Save requires an existing parent directory. Load stops a running simulation first, then replaces the current scene (unsaved objects are lost).
+
+`coppelia_import_model` imports existing URDF, SDF, STL, OBJ, or DAE files. Optional `position` and `orientation` place every new root; `scale` applies to meshes. Results include created roots and joint counts. URDF `package_root` replaces `package://` resource prefixes. Imports modify the active scene.
+
+`coppelia_ros2_status` checks whether CoppeliaSim can load `simROS2`. This device runs ROS 2 Humble in an isolated Docker image, avoiding host package changes. Build and start it with `./coppelia_ros2_container.sh build` and `./coppelia_ros2_container.sh start`. `coppelia_launch.sh` selects the image automatically when available.
+
+`coppelia_ros2` supports `publish`, `echo`, `service_call`, and `action_goal`. Pass `operation`, absolute ROS name, `interface_type` such as `std_msgs/msg/String`, and a JSON-object `payload` except for `echo`. Each operation uses Docker with host networking and shared IPC; `ROS_DOMAIN_ID` defaults to `0`.
+
+### Runtime health and typed motion
+
+`coppelia_health` checks the active ZeroMQ endpoint, simulator version, and whether `simIK` and `simOMPL` load. It does not launch CoppeliaSim or alter the scene.
+
+`coppelia_motion` provides two typed operations:
+
+- `operation="ik"` requires `base`, `tip`, and `target` absolute object paths. Optional `constraints` accepts `pose`, `position`, or `orientation`; `method` accepts `damped_least_squares` or `pseudo_inverse`. A solved result is applied to the scene.
+- `operation="plan"` requires `joints` paths and a numeric `goal` state. Optional `collision_pairs` contains pairs of object paths; `algorithm`, `max_time`, `simplify_time`, and `path_states` tune planning. The returned path is not applied to the robot.
+
+Both operations return structured JSON and fail explicitly when plugins or object paths are unavailable.
+
+`coppelia_trajectory` executes the `path` returned by `coppelia_motion`, passed as `trajectory`, in the same joint order. It interpolates each state over `steps_per_waypoint`, checks each joint's configured position and `max_velocity` limits, and requires at least one `collision_pairs` pair checked after every simulation step.
+
+`gripper_actions` contains `{ "waypoint": 0, "joint": "/GripperJoint", "position": 0.0, "settle_steps": 5 }` entries. `grasp` requires `object`, `gripper`, `min_normal_force`, `hold_until_waypoint`, `min_lift`, `max_slip`, `max_rotation_rad`, and `wrench_sweep: { "force_n": 0.2, "torque_nm": 0.02, "steps_per_direction": 2 }`. The executor checks contact, translation and quaternion rotation relative to the gripper, then applies positive and negative force and torque on all three world axes. Failed contact, slip, lift, collision, or any tested wrench stops simulation. The 12-direction sweep measures only bounded wrench resistance; it is not an analytic force-closure proof or hardware-safety validation. `place` remains a geometric distance check. Successful execution leaves simulation running.
+
+Live verification on CoppeliaSim 4.10.0: a Panda joint trajectory ran 80 steps toward 0.2 rad and reported 0.19711282 rad. Excess velocity was rejected; an intentional surface collision stopped the simulation (state `0`). Both camera captures were inspected and temporary models were removed. This run did not verify gripper manipulation.
+
+P0 live grasp verification first used a synthetic lift fixture, not a commercial finger gripper. A later four-wall dynamic clamp passed a 12-direction sweep at ±0.05 N and ±0.001 N·m; measured translation and rotation stayed below `2.6e-7 m` and `4.9e-6 rad`. That fixture had no actuated arm or lift, and camera snapshots were black. The sweep does not prove analytic force closure, real-world friction, safe hardware, or successful release. See [P0 verification and REA evidence](docs/changes/p0-reset-contact-verification.md).
+
+### Typed sensors, mechanism inspection, and experiments
+
+`coppelia_sensors` accepts `sensors=[{"path": "/Robot/Camera", "type": "vision_rgb"}]`. Supported types: `proximity`, `vision_rgb`, `vision_depth`, `force_torque`, and `point_cloud`. RGB is RGB8 base64; depth values are metric float32 in sensor pixel order. Point clouds use metric depth and coordinates with +X right, +Y up, and +Z forward; `max_points` defaults to `4096` and caps sampled output. Vision sensor data is refreshed before each read. Sensor paths must match requested CoppeliaSim object types.
+
+`coppelia_mechanism(root_path="/Robot")` reports descendant joints with type, interval, position, and target, plus sensors. The selected root is the base candidate. Leaf shapes and dummies are end-effector candidates only; the tool does not infer semantic tool frames.
+
+`coppelia_experiments(initial_scene="/absolute/baseline.ttt", episodes=[...])` runs at most 20 episodes and 10000 combined steps. **Each episode replaces the current scene with that baseline**, removing objects and dynamic state from preceding episodes. Save unsaved scene work first. Per-episode `joint_positions` map absolute joint paths to positions applied while stopped, including position targets. Shared `observe`, `sensors` (proximity), and `sample_every` apply to all episodes.
+
+Every episode requires nonempty `success_conditions`: `{ "kind": "object_position", "object": "/Part", "position": [0, 0, 0.5], "tolerance": 0.01 }` or `{ "kind": "proximity", "sensor": "/Sensor", "detected": true }`. All assertions must pass and no `until` diagnostic may trigger. Top-level `success` means the batch ran; inspect episode `success` and summary counts for task outcomes. Results include baseline `initial_state`, a step-zero sample, subsequent samples, elapsed simulation time, and `success_checks`. Assertions run while stepping remains enabled; the batch finishes stopped with stepping disabled. Reload does not reset external controllers or ROS 2 state.
+
+These observation and batch tools return structured JSON and emit JSON event logs. They do not establish hardware safety.
+
 
 ### Command-line runner
 
@@ -111,7 +173,7 @@ Runner accepts `--host` and `--port` for an existing remote simulator; MCP tool 
 
 ## Troubleshooting
 
-- **Cannot connect to `localhost:23000`:** Start CoppeliaSim, enable its ZeroMQ Remote API addon, and verify port `23000`. Automatic launch scripts assume author-specific absolute paths; launch manually on other machines.
+- **Cannot connect to `localhost:23000`:** Set `COPPELIASIM_ROOT`, run `bash coppelia_launch.sh --headless`, and inspect `/tmp/coppelia_stdout.log`. The launcher disables interactive Commander (`-GsimCmd.autoStart=false`): Commander exits on closed stdin during unattended startup. It also suppresses startup dialogs and selects `.venv/bin/python` for simulator scripts.
 - **`Failed to import coppeliasim_zmqremoteapi_client`:** Check `COPPELIASIM_ROOT` points to the CoppeliaSim directory containing `programming/zmqRemoteApi/clients/python/src`, then rerun with the project virtual environment.
 - **Robot model not found:** Check the model exists beneath `COPPELIASIM_ROOT/models`. Use `./coppelia_run --list-robots` to inspect alias paths or pass an existing `.ttm` path to `load_robot`.
 - **No snapshots:** Check `stderr` in the tool response. Snapshots are written to `/tmp` only after successful code execution and capture; they are local to the machine running the server.

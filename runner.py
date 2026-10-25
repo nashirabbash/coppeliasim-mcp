@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """CoppeliaSim CLI Runner for omp agents.
 
-Connects to CoppeliaSim via ZeroMQ Remote API, provides helper utilities
-for loading robot models, executes Python scene manipulation scripts,
+Executes Python scripts against the simulator's ZeroMQ Remote API
 and automatically captures observer camera snapshots.
 """
+
+import math
 
 import argparse
 import io
@@ -15,8 +16,9 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import subprocess
 import time
+import signal
 import socket
-
+from json_log import log
 
 # Add CoppeliaSim bundled Python client to sys.path
 COPPELIA_ROOT = Path(os.environ.get("COPPELIASIM_ROOT", "/home/myarchlinux/.local/opt/coppeliaSim"))
@@ -107,7 +109,7 @@ def launch_coppelia(headless: bool = False, timeout: int = 25):
     if is_coppelia_running():
         return True
 
-    cmd = ["/home/myarchlinux/Documents/CoppeliaTools/coppelia_launch.sh"]
+    cmd = [str(Path(__file__).resolve().with_name("coppelia_launch.sh"))]
     if headless:
         cmd.append("--headless")
     subprocess.run(cmd, check=True)
@@ -221,30 +223,71 @@ SYSTEM_OBJECT_PREFIXES = (
     'Agent_'
 )
 
+SCENE_OBJECT_TYPE_NAMES = (
+    ("sceneobject_shape", "shape"),
+    ("sceneobject_joint", "joint"),
+    ("sceneobject_graph", "graph"),
+    ("sceneobject_camera", "camera"),
+    ("sceneobject_light", "light"),
+    ("sceneobject_dummy", "dummy"),
+    ("sceneobject_proximitysensor", "proximity sensor"),
+    ("sceneobject_octree", "octree"),
+    ("sceneobject_pointcloud", "point cloud"),
+    ("sceneobject_visionsensor", "vision sensor"),
+    ("sceneobject_forcesensor", "force sensor"),
+    ("sceneobject_script", "script"),
+)
+
 
 def get_scene_hierarchy(sim) -> list:
-    """Extract active user objects and models in scene to prevent duplicate creations."""
-    try:
-        root_objs = sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 1)
-        scene_items = []
-        for h in root_objs:
-            alias = sim.getObjectAlias(h)
-            if any(alias.startswith(p) for p in SYSTEM_OBJECT_PREFIXES):
-                continue
-            pos = [round(x, 2) for x in sim.getObjectPosition(h, -1)]
-            try:
-                is_model = (sim.getModelProperty(h) & sim.modelproperty_not_model) == 0
-            except Exception:
-                is_model = False
-            scene_items.append({
-                "name": alias,
-                "handle": h,
-                "is_model": is_model,
-                "pos": pos
-            })
-        return scene_items
-    except Exception:
-        return []
+    """Return visible scene roots with recursively nested user objects."""
+    handles = sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 0)
+    children_by_parent = {}
+    for handle in handles:
+        parent = sim.getObjectParent(handle)
+        children_by_parent.setdefault(parent, []).append(handle)
+
+    object_type_names = {
+        getattr(sim, constant): name
+        for constant, name in SCENE_OBJECT_TYPE_NAMES
+        if hasattr(sim, constant)
+    }
+    object_count = 0
+
+    def build_node(handle):
+        nonlocal object_count
+        alias = sim.getObjectAlias(handle)
+        if any(alias.startswith(prefix) for prefix in SYSTEM_OBJECT_PREFIXES):
+            return None
+        object_type = sim.getObjectType(handle)
+        try:
+            is_model = (sim.getModelProperty(handle) & sim.modelproperty_not_model) == 0
+        except Exception:
+            is_model = False
+        node = {
+            "name": alias,
+            "path": sim.getObjectAlias(handle, 1),
+            "handle": handle,
+            "type": object_type_names.get(object_type, f"unknown:{object_type}"),
+            "is_model": is_model,
+            "pos": [round(value, 2) for value in sim.getObjectPosition(handle, -1)],
+            "children": []
+        }
+        node["children"] = sorted(
+            (child for child_handle in children_by_parent.get(handle, [])
+             if (child := build_node(child_handle)) is not None),
+            key=lambda child: child["path"]
+        )
+        object_count += 1
+        return node
+
+    roots = [
+        node for handle in children_by_parent.get(-1, [])
+        if (node := build_node(handle)) is not None
+    ]
+    roots.sort(key=lambda node: node["path"])
+    log("info", "simulator.scene_hierarchy_read", object_count=object_count, root_count=len(roots))
+    return roots
 
 
 
@@ -278,8 +321,79 @@ def make_load_robot_fn(sim):
     return load_robot
 
 
-def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapshot: bool = True, reset: bool = False, auto_launch: bool = False, headless: bool = False):
-    """Execute code against CoppeliaSim and return structured result."""
+def evaluate_scene_diagnostics(sim, checks: list[dict], floor: dict | None = None) -> list[dict]:
+    """Evaluate caller-selected collision, distance, and floor checks."""
+    floor = floor or get_floor_info(sim)
+    results = []
+    for check in checks:
+        kind = check.get("kind") if isinstance(check, dict) else None
+        objects = check.get("objects", [check.get("object")]) if isinstance(check, dict) else []
+        item = {"kind": kind, "objects": objects, "status": "unavailable"}
+        try:
+            if not isinstance(check, dict):
+                raise ValueError("Each diagnostic must be an object")
+            if kind not in ("collision", "distance", "floor_bounds"):
+                raise ValueError(f"Unsupported diagnostic kind: {kind}")
+            required = 1 if kind == "floor_bounds" else 2
+            if not isinstance(objects, list) or len(objects) != required or any(not isinstance(name, str) or not name for name in objects):
+                raise ValueError(f"{kind} requires {required} object name(s)")
+            handles = [sim.getObject(name, {"noError": True}) for name in objects]
+            if any(handle == -1 for handle in handles):
+                raise ValueError(f"Object not found: {objects}")
+            if kind == "collision":
+                collided = sim.checkCollision(*handles)[0]
+                item.update(status="issue" if collided else "clear", collision=bool(collided))
+            elif kind == "distance":
+                threshold = check["threshold"]
+                if not isinstance(threshold, (int, float)) or not math.isfinite(threshold) or threshold < 0:
+                    raise ValueError("distance threshold must be a finite non-negative number")
+                result, distance_data, _ = sim.checkDistance(*handles)
+                if not result or not isinstance(distance_data, (tuple, list)) or len(distance_data) < 7:
+                    raise ValueError("Distance API did not return a measurement")
+                distance = float(distance_data[6])
+                closest_points = [distance_data[:3], distance_data[3:6]]
+                item.update(
+                    status="issue" if distance <= threshold else "clear",
+                    distance=distance,
+                    threshold=threshold,
+                    closest_points=closest_points
+                )
+            else:
+                if not floor.get("exists", True):
+                    raise ValueError("Floor not found")
+                matrix = sim.getObjectMatrix(handles[0], -1)
+                bounds = {
+                    axis: (
+                        sim.getObjectFloatParam(handles[0], getattr(sim, f"objfloatparam_objbbox_min_{axis}")),
+                        sim.getObjectFloatParam(handles[0], getattr(sim, f"objfloatparam_objbbox_max_{axis}"))
+                    )
+                    for axis in "xyz"
+                }
+                corners = [
+                    [
+                        matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3],
+                        matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7]
+                    ]
+                    for x in bounds["x"]
+                    for y in bounds["y"]
+                    for z in bounds["z"]
+                ]
+                x_bounds, y_bounds = floor["bounds_x"], floor["bounds_y"]
+                inside = all(x_bounds[0] <= point[0] <= x_bounds[1] and y_bounds[0] <= point[1] <= y_bounds[1] for point in corners)
+                item.update(status="clear" if inside else "issue", bounds_x=x_bounds, bounds_y=y_bounds)
+        except Exception as error:
+            item["error"] = str(error)
+        results.append(item)
+    return results
+
+
+def _raise_execution_timeout(_signum, _frame):
+    raise TimeoutError("coppelia_step execution timed out")
+
+
+def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapshot: bool = True, reset: bool = False, auto_launch: bool = False, headless: bool = False, diagnostics: list[dict] | None = None, timeout: float = 30.0):
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a finite positive number")
     if auto_launch and not is_coppelia_running(host, port):
         launched = launch_coppelia(headless=headless)
         if not launched:
@@ -321,15 +435,16 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         ensure_observer_camera(sim)
     except Exception:
         pass
-
     load_robot_fn = make_load_robot_fn(sim)
+    from motion_tools import plan_joint_path, solve_ik
 
-    # Injected environment
     env = {
         "client": client,
         "sim": sim,
         "simIK": simIK,
         "simOMPL": simOMPL,
+        "solve_ik": lambda **kwargs: solve_ik(sim, simIK, **kwargs),
+        "plan_joint_path": lambda **kwargs: plan_joint_path(sim, simOMPL, **kwargs),
         "load_robot": load_robot_fn,
         "capture_snapshot": lambda: capture_snapshot(sim, SNAPSHOT_PATH, "isometric"),
         "capture_topdown": lambda: capture_snapshot(sim, TOPDOWN_SNAPSHOT_PATH, "topdown"),
@@ -343,13 +458,25 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
     stderr_buf = io.StringIO()
     exec_success = False
     exec_error = None
-
-    with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-        try:
-            exec(code, env)
-            exec_success = True
-        except Exception as e:
-            exec_error = str(e)
+    log("info", "simulator.script_started", timeout=timeout)
+    timer_started = time.monotonic()
+    old_timer = signal.getitimer(signal.ITIMER_REAL)
+    old_handler = signal.signal(signal.SIGALRM, _raise_execution_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+            try:
+                exec(code, env)
+                exec_success = True
+            except Exception as e:
+                exec_error = str(e)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
+        if old_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, max(0.001, old_timer[0] - (time.monotonic() - timer_started)), old_timer[1])
+        if exec_error and "timed out" in exec_error:
+            log("error", "simulator.script_timed_out", timeout=timeout)
 
     if exec_success:
         auto_frame_gui_camera(sim)
@@ -363,13 +490,19 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             stderr_buf.write(f"\n[Warning: Snapshot capture failed: {snap_err}]")
 
     floor_data = None
-    scene_hierarchy = []
     try:
         floor_data = get_floor_info(sim)
-        scene_hierarchy = get_scene_hierarchy(sim)
     except Exception:
         pass
+    scene_hierarchy = []
+    scene_hierarchy_error = None
+    try:
+        scene_hierarchy = get_scene_hierarchy(sim)
+    except Exception as error:
+        scene_hierarchy_error = str(error)
+        log("error", "simulator.scene_hierarchy_failed", error=scene_hierarchy_error)
 
+    log("success" if exec_success else "error", "simulator.script_finished", success=exec_success)
     return {
         "success": exec_success,
         "stdout": stdout_buf.getvalue(),
@@ -377,8 +510,10 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "error": exec_error,
         "snapshot_path": snapshot_file,
         "topdown_path": topdown_file,
+        "diagnostics": evaluate_scene_diagnostics(sim, diagnostics, floor_data) if diagnostics and exec_success else [],
         "floor": floor_data,
-        "scene_objects": scene_hierarchy
+        "scene_objects": scene_hierarchy,
+        "scene_hierarchy_error": scene_hierarchy_error
     }
 
 
@@ -388,6 +523,8 @@ def main():
     parser.add_argument("--file", type=str, help="Path to Python script file to execute")
     parser.add_argument("--host", type=str, default="localhost", help="CoppeliaSim ZMQ host")
     parser.add_argument("--port", type=int, default=23000, help="CoppeliaSim ZMQ port")
+    parser.add_argument("--timeout", type=float, default=30.0, help="Maximum user script execution time in seconds")
+    parser.add_argument("--diagnostics", type=json.loads, help="JSON list of opt-in scene diagnostics")
     parser.add_argument("--no-snapshot", action="store_true", help="Disable auto-capture snapshot")
     parser.add_argument("--reset", action="store_true", help="Stop simulation before running")
     parser.add_argument("--list-robots", action="store_true", help="List available robot model aliases")
@@ -429,7 +566,9 @@ def main():
         take_snapshot=not args.no_snapshot,
         reset=args.reset,
         auto_launch=args.launch or args.launch_headless,
-        headless=args.launch_headless
+        headless=args.launch_headless,
+        diagnostics=args.diagnostics,
+        timeout=args.timeout
     )
 
     print(json.dumps(result, indent=2))

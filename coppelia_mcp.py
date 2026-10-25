@@ -6,22 +6,28 @@ API cheat-sheet, signatures, constants, and pre-built robot models directly
 in the tool description so the agent never wastes turns researching or trial-and-erroring.
 """
 
+import math
 import json
+import base64
 from pathlib import Path
 from mcp.server.mcpserver import MCPServer
-import mcp.server.stdio
+from mcp_types import CallToolResult, ImageContent, TextContent
+import asyncio
 
 import sys
 DIR = Path(__file__).resolve().parent
 if str(DIR) not in sys.path:
     sys.path.insert(0, str(DIR))
 
-from runner import (
-    run_code,
-    ROBOT_ALIASES,
-    SNAPSHOT_PATH,
-    is_coppelia_running
-)
+from runner import ROBOT_ALIASES
+from scene_catalog import search_catalog
+from scene_io import run_scene_action
+from sim_run import run_simulation
+from motion_tools import run_motion, runtime_health
+from trajectory_tools import run_trajectory
+from p1_mcp_tools import register_p1_tools
+from p2_mcp_tools import register_p2_tools
+
 
 server = MCPServer("coppeliasim")
 
@@ -47,11 +53,12 @@ Execute Python code directly inside CoppeliaSim simulator.
 Auto-launches simulator if closed, runs physics/scene code, auto-captures dual camera snapshots, and returns execution result in ONE single call.
 
 SCENE HIERARCHY AWARENESS RULE (PREVENT DUPLICATE MODELS):
-Every call returns `"scene_objects": [{"name": "...", "is_model": bool, "pos": [x, y, z]}]`.
-ALWAYS inspect `scene_objects` before creating/spawning:
-1. DO NOT spawn a robot if a model with the same alias/name already exists in `scene_objects`.
+Every call returns `"scene_objects"` as root nodes. Each node includes `name`, `path`, `handle`, `type`, `is_model`, `pos`, and recursive `children`; this covers every non-system object.
+ALWAYS inspect the full hierarchy before creating or spawning:
+1. DO NOT spawn a robot if a matching model already exists anywhere under `scene_objects`.
 2. To reuse existing robot: `robot = sim.getObject('/PioneerP3DX')` (or use existing handle).
 3. To remove duplicate/old objects: `sim.removeObject(sim.getObject('/OldName'))`.
+If `scene_hierarchy_error` is present, scene inventory failed; do not treat an empty list as an empty scene.
 
 WALLS & ENCLOSURE VISIBILITY RULE (PREVENT GREY VOID BLINDNESS):
 NEVER build solid block labyrinths or closed rooms that entomb the camera/robot in solid gray geometry!
@@ -66,7 +73,7 @@ INJECTED OBJECTS IN CODE:
 - `simOMPL`: Open Motion Planning Library module (RRT, RRT*, PRM path planners).
 - `load_robot(alias, position=[x,y,z], orientation=[a,b,g])`: Loads robot model.
   Valid aliases: ['pioneer', 'youbot', 'hexapod', 'ant_hexapod', 'omni', 'quadcopter', 'asti', 'panda', 'ur5', 'ur10', 'vacuum', 'epuck'].
-- `get_scene_hierarchy()`: Returns current active user models and shapes in the scene.
+- `get_scene_hierarchy()`: Returns root objects with nested children for every non-system object type.
 - `get_floor_info()`: Returns default floor size, position, and bounding box.
 - `client`: RemoteAPIClient instance.
 
@@ -88,7 +95,9 @@ EXACT API CHEAT-SHEET (DO NOT SEARCH OR GUESS - USE THESE DIRECTLY):
 
 3. Collision & Distance Detection:
    - Collision check: `result, collPair = sim.checkCollision(entity1Handle, entity2Handle)` # 1 = colliding, 0 = clear
-   - Distance check: `result, distData = sim.checkDistance(entity1Handle, entity2Handle, threshold)`
+   - Distance check: `result, distData, pairHandles = sim.checkDistance(entity1Handle, entity2Handle)` returns distance and closest points without a threshold.
+
+Optional `diagnostics` request returns structured results in the JSON text content. Use `{"kind":"distance","objects":["/A","/B"],"threshold":0.1}` to receive `distance`, `closest_points`, `threshold`, and `status`; threshold only controls issue/clear classification. Scripts can also inspect and edit the full scene through `sim.*`.
 
 4. Path & Motion Planning (simOMPL & simIK):
    - simOMPL Task: `task = simOMPL.createTask('task_name')`
@@ -117,46 +126,168 @@ sim.startSimulation()
 """
 
 
+async def execute_step(script: str, reset: bool, headless: bool, timeout: float, diagnostics: list[dict] | None) -> dict:
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        return {"success": False, "error": "timeout must be a finite positive number", "stdout": "", "stderr": ""}
+    runner = Path(__file__).with_name("runner.py")
+    command = [sys.executable, str(runner), "--timeout", str(timeout)]
+    command.append("--launch-headless" if headless else "--launch")
+    if diagnostics is not None:
+        command.extend(["--diagnostics", json.dumps(diagnostics)])
+    if reset:
+        command.append("--reset")
+    process = await asyncio.create_subprocess_exec(
+        *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(script.encode()), timeout=timeout + 35)
+    except asyncio.CancelledError:
+        process.terminate()
+        await process.wait()
+        log("info", "simulator.script_cancelled")
+        raise
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        log("error", "simulator.request_timed_out", timeout=timeout)
+        return {"success": False, "error": "CoppeliaSim request timed out", "stdout": "", "stderr": ""}
+    try:
+        return json.loads(stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {"success": False, "error": f"Runner exited with status {process.returncode}", "stdout": "", "stderr": ""}
+
+
 @server.tool(
     name="coppelia_step",
     description=TOOL_DESCRIPTION
 )
-async def coppelia_step(code: str = "", reset: bool = False, headless: bool = False) -> str:
-    """Execute Python code against CoppeliaSim in a single round-trip.
-
-    Args:
-        code: Python script using sim.* and load_robot(). If empty, captures snapshot & returns status.
-        reset: If True, resets/stops current simulation before executing code.
-        headless: If True and simulator is not running, launches without GUI.
-    """
+async def coppelia_step(code: str = "", reset: bool = False, headless: bool = False, diagnostics: list[dict] | None = None, timeout: float = 30.0) -> CallToolResult:
+    """Run script with timeout in seconds; timeout interrupts user Python execution."""
     script = code.strip() if code.strip() else "pass"
-    result = run_code(
-        code=script,
-        take_snapshot=True,
-        reset=reset,
-        auto_launch=True,
-        headless=headless
-    )
+    result = await execute_step(script, reset, headless, timeout, diagnostics)
 
+    snapshot_errors = []
     payload = {
-        "EYE_VERIFICATION_REQUIRED": (
-            "STOP! DO NOT rely only on logs or success=True. You MUST read /tmp/coppelia_topdown.png "
-            "and /tmp/coppelia_snapshot.png to inspect board layout, heights, robot stability, and physics alignment."
-        ),
-        "topdown_snapshot": result["topdown_path"] if result.get("topdown_path") and Path(result["topdown_path"]).exists() else None,
-        "snapshot": result["snapshot_path"] if result.get("snapshot_path") and Path(result["snapshot_path"]).exists() else None,
+        "topdown_snapshot": result.get("topdown_path"),
+        "snapshot": result.get("snapshot_path"),
         "success": result["success"],
         "stdout": result["stdout"].strip(),
         "stderr": result["stderr"].strip(),
         "error": result["error"],
         "floor": result.get("floor"),
         "scene_objects": result.get("scene_objects"),
-        "available_robots": list(ROBOT_ALIASES.keys()) if not result["success"] else None
+        "scene_hierarchy_error": result.get("scene_hierarchy_error"),
+        "diagnostics": result.get("diagnostics", []),
+        "available_robots": list(ROBOT_ALIASES.keys()) if not result["success"] else None,
+        "snapshot_errors": snapshot_errors,
     }
+    contents = [TextContent(type="text", text=json.dumps(
+        {key: value for key, value in payload.items() if value is not None and value != ""},
+        separators=(",", ":")
+    ))]
+    for key in ("snapshot", "topdown_snapshot"):
+        path = result.get("snapshot_path" if key == "snapshot" else "topdown_path")
+        if not path:
+            continue
+        try:
+            contents.append(TextContent(type="text", text=f"{key}:"))
+            contents.append(ImageContent(
+                type="image",
+                data=base64.b64encode(Path(path).read_bytes()).decode("ascii"),
+                mimeType="image/png"
+            ))
+        except Exception as error:
+            snapshot_errors.append({"snapshot": key, "error": str(error)})
+    contents[0] = TextContent(type="text", text=json.dumps(
+        {key: value for key, value in payload.items() if value is not None and value != ""},
+        separators=(",", ":")
+    ))
+    return CallToolResult(content=contents)
 
-    clean_payload = {k: v for k, v in payload.items() if v is not None and v != ""}
-    return json.dumps(clean_payload, separators=(',', ':'))
 
+SIMULATE_DESCRIPTION = "Step CoppeliaSim N times (or until a diagnostic issue). Returns positions and proximity sensor samples as JSON. until: {kind: collision|distance|floor_bounds, objects, threshold?}. export_path: .json file to write results."
+CATALOG_DESCRIPTION = "Search CoppeliaSim model (.ttm) and scene (.ttt) files by space-separated terms matched against relative path and robot alias. kind: all|model|scene."
+SCENE_DESCRIPTION = "Save or load a CoppeliaSim scene. action: save|load. path: absolute .ttt path. load stops the running simulation and replaces the current scene."
+
+
+def json_result(payload: dict) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, indent=2))])
+
+
+@server.tool(name="coppelia_simulate", description=SIMULATE_DESCRIPTION)
+async def coppelia_simulate(steps: int = 100, observe: list[str] | None = None, sensors: list[str] | None = None, sample_every: int = 1, until: dict | None = None, export_path: str | None = None, headless: bool = False) -> CallToolResult:
+    """Run structured simulation and return sampled state as JSON."""
+    return json_result(run_simulation(steps=steps, observe=observe, sensors=sensors, sample_every=sample_every, until=until, export_path=export_path, headless=headless))
+
+
+@server.tool(name="coppelia_catalog", description=CATALOG_DESCRIPTION)
+async def coppelia_catalog(query: str = "", kind: str = "all", limit: int = 50) -> CallToolResult:
+    """Search model and scene catalog; no simulator needed."""
+    try:
+        return json_result(search_catalog(query, kind, limit))
+    except ValueError as error:
+        return json_result({"success": False, "error": str(error)})
+
+
+@server.tool(name="coppelia_scene", description=SCENE_DESCRIPTION)
+async def coppelia_scene(action: str, path: str, headless: bool = False) -> CallToolResult:
+    """Save or load a scene through the simulator."""
+    return json_result(run_scene_action(action, path, headless=headless))
+
+@server.tool(name="coppelia_health", description="Check active ZeroMQ connection, simulator version, and runtime availability of simIK and simOMPL. Does not launch or modify the scene.")
+async def coppelia_health(host: str = "localhost", port: int = 23000) -> CallToolResult:
+    result = await asyncio.to_thread(runtime_health, host, port)
+    log("info" if result["connected"] else "error", "simulator.health_result", **result)
+    return json_result(result)
+
+
+@server.tool(name="coppelia_motion", description="Typed motion operations: operation='ik' uses base, tip, target, constraints and method; operation='plan' uses joints, goal, collision_pairs, algorithm, max_time, simplify_time and path_states. Planning returns a path and never applies it to robot joints.")
+async def coppelia_motion(
+    operation: str,
+    base: str | None = None,
+    tip: str | None = None,
+    target: str | None = None,
+    constraints: str = "pose",
+    method: str = "damped_least_squares",
+    damping: float = 0.02,
+    iterations: int = 20,
+    joints: list[str] | None = None,
+    goal: list[float] | None = None,
+    collision_pairs: list[list[str]] | None = None,
+    algorithm: str = "RRTConnect",
+    max_time: float = 4.0,
+    simplify_time: float = 0.5,
+    path_states: int = 100,
+    headless: bool = False,
+) -> CallToolResult:
+    if operation == "ik":
+        parameters = {
+            "base": base, "tip": tip, "target": target,
+            "constraints": constraints, "method": method,
+            "damping": damping, "iterations": iterations
+        }
+    elif operation == "plan":
+        parameters = {
+            "joints": joints or [], "goal": goal or [],
+            "collision_pairs": collision_pairs or [], "algorithm": algorithm,
+            "max_time": max_time, "simplify_time": simplify_time, "path_states": path_states
+        }
+    else:
+        parameters = {}
+    result = await asyncio.to_thread(run_motion, operation, headless, **parameters)
+    return json_result(result)
+
+@server.tool(name="coppelia_trajectory", description="Execute a joint path with velocity and optional acceleration/jerk limits, per-step collision checks, dynamic-contact grasp checks with post-lift retention and slip limits, and distance-based place checks.")
+async def coppelia_trajectory(joints: list[str], trajectory: list[list[float]], collision_pairs: list[list[str]], max_velocity: list[float], steps_per_waypoint: int = 10, gripper_actions: list[dict] | None = None, max_acceleration: list[float] | None = None, max_jerk: list[float] | None = None, headless: bool = False) -> CallToolResult:
+    result = await asyncio.to_thread(run_trajectory, headless, joints=joints, trajectory=trajectory, collision_pairs=collision_pairs, max_velocity=max_velocity, steps_per_waypoint=steps_per_waypoint, gripper_actions=gripper_actions or [], max_acceleration=max_acceleration, max_jerk=max_jerk)
+    return json_result(result)
+
+
+
+
+
+register_p1_tools(server, json_result)
+register_p2_tools(server, json_result)
 
 if __name__ == "__main__":
     server.run(transport="stdio")
