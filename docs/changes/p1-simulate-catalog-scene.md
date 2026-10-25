@@ -7,13 +7,14 @@
 
 ## Added modules
 - `json_log.py`: JSON log line to stderr; levels debug, info, success, error.
-- `sim_connection.py`: `connect_sim`; auto-launch via `runner.launch_coppelia`.
+- `sim_connection.py`: owns `RemoteAPIClient`, `connect_sim`, readiness checks, and launch.
 - `sim_run.py`: request validation, sampling, `run_simulation`.
 - `scene_catalog.py`: catalog search.
 - `scene_io.py`: save, load, stop, export, `run_scene_action`.
 
 ## Changed
 - `coppelia_mcp.py`: registers three tools.
+- `runner.py` remains executable; `runner_cli.py` owns CLI parsing and dispatch.
 - `README.md`: documents the three tools.
 
 ## Verified live (CoppeliaSim 4.x, port 23000)
@@ -27,6 +28,6 @@
 
 ## Known limits
 - Root object paths need leading `/`; `Shape` is not found, `/Shape` is.
-- `runner.py` is 508 lines, over the 300-line rule; untouched here.
+- `runner.py` was 508 lines; staged extraction reduced it to 285, below the 300-line rule.
 - Load replaces the current scene; no confirmation step.
 - Not committed.

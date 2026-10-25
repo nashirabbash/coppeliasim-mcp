@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$DIR/.." && pwd)"
+exec "$REPO_DIR/.venv/bin/python" "$REPO_DIR/runner.py" "$@"

@@ -129,6 +129,14 @@ Object paths are CoppeliaSim absolute paths. Root objects need a leading slash: 
 
 `coppelia_ros2` supports `publish`, `echo`, `service_call`, and `action_goal`. Pass `operation`, absolute ROS name, `interface_type` such as `std_msgs/msg/String`, and a JSON-object `payload` except for `echo`. Each operation uses Docker with host networking and shared IPC; `ROS_DOMAIN_ID` defaults to `0`.
 
+### P2 floor plans, signals, and physics comparison
+
+`coppelia_import_floorplan` converts a grayscale image into static cuboid segments. Pass `image_path`, `pixel_size`, `wall_height`, `door_height`, `window_height`, and non-overlapping grayscale ranges `wall_range`, `door_range`, and `window_range` as `[minimum, maximum]`. Pixels outside those ranges are ignored. `respondable` defaults to `true`. Inputs are limited to 1,000,000 pixels and 10,000 horizontal segments. This is an MCP image converter, not a wrapper around the CoppeliaSim GUI add-on.
+
+`coppelia_signals` uses `operation="get"` or `"set"`, `signal_type="integer"|"float"|"string"`, and `name`; `value` is required for writes. A missing signal read returns `found=false`. Signals are simulator-local; this tool is not a PLC, OPC UA, or Modbus adapter.
+
+`coppelia_physics_engine` reports and can set the scene's `dynamicsEngine` `[index, version]` pair and `dynamicsStepSize`; settings change only while simulation is stopped. `coppelia_physics_benchmark` accepts `scenes` as 2–5 engine-name to `.ttt` path entries plus identical `episodes`. Each scene must already be configured for its named engine; labels are caller-supplied and are not checked against scene properties. The tool reloads each scene and runs the same bounded episode definitions; save unsaved scene work first. Results compare task outcomes and elapsed simulation time, not equivalent solver parameters or hardware safety.
+
 ### Runtime health and typed motion
 
 `coppelia_health` checks the active ZeroMQ endpoint, simulator version, and whether `simIK` and `simOMPL` load. It does not launch CoppeliaSim or alter the scene.

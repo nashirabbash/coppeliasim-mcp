@@ -18,4 +18,15 @@ dependencies = [
 ]
 
 [project.scripts]
-coppeliasim-mcp = "coppelia_mcp:main"
+coppeliasim-mcp = "coppeliasim_mcp.coppelia_mcp:main"
+
+[tool.setuptools]
+py-modules = ["coppelia_mcp", "runner"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["coppeliasim_mcp*"]
+
+[tool.setuptools.data-files]
+"share/coppeliasim-mcp/scripts" = ["scripts/coppelia_launch.sh", "scripts/coppelia_ros2_container.sh"]
+"share/coppeliasim-mcp/docker/ros2" = ["docker/ros2/Dockerfile"]
