@@ -26,7 +26,7 @@ if probe; then
     echo '{"level":"info","event":"simulator.already_ready","port":23000}'
     exit 0
 fi
-ROS2_MODE="${COPPELIASIM_ROS2_MODE:-auto}"
+ROS2_MODE="${COPPELIASIM_ROS2_MODE:-native}"
 ROS2_IMAGE="${COPPELIASIM_ROS2_IMAGE:-coppeliasim-ros2:humble}"
 case "$ROS2_MODE" in
     docker)

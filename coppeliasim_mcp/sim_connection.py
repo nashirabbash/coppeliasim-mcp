@@ -36,7 +36,7 @@ def is_coppelia_running(host: str = "localhost", port: int = 23000) -> bool:
 
 
 def launch_coppelia(headless: bool = False, timeout: int = 25):
-    """Launch CoppeliaSim application if not currently running."""
+    """Launch CoppeliaSim GUI by default, or headless when explicitly requested."""
     if is_coppelia_running():
         return True
 

@@ -39,7 +39,7 @@ bash setup_env.sh
 .venv/bin/python -m pip install -e .
 ```
 
-`setup_env.sh` creates `.venv` and installs runner dependencies; `pip install -e .` also installs the MCP server dependency. `bash coppelia_launch.sh --headless` launches the native simulator with the project Python interpreter and verifies an actual ZeroMQ RPC response before reporting readiness.
+`setup_env.sh` creates `.venv` and installs runner dependencies; `pip install -e .` also installs the MCP server dependency. `bash coppelia_launch.sh` launches the simulator with GUI by default; pass `--headless` only when needed.
 
 For installations elsewhere, set `COPPELIASIM_ROOT` before running the CLI or starting the MCP client (or set it in the client's server environment):
 
@@ -125,7 +125,7 @@ Object paths are CoppeliaSim absolute paths. Root objects need a leading slash: 
 
 `coppelia_import_model` imports existing URDF, SDF, STL, OBJ, or DAE files. Optional `position` and `orientation` place every new root; `scale` applies to meshes. Results include created roots and joint counts. URDF `package_root` replaces `package://` resource prefixes. Imports modify the active scene.
 
-`coppelia_ros2_status` checks whether CoppeliaSim can load `simROS2`. This device runs ROS 2 Humble in an isolated Docker image, avoiding host package changes. Build and start it with `./coppelia_ros2_container.sh build` and `./coppelia_ros2_container.sh start`. `coppelia_launch.sh` selects the image automatically when available.
+`coppelia_ros2_status` checks whether CoppeliaSim can load `simROS2`. ROS 2 Humble runs in an isolated Docker image, avoiding host package changes. Build and start it with `./coppelia_ros2_container.sh build` and `./coppelia_ros2_container.sh start`. CoppeliaSim launches in GUI mode by default. Set `COPPELIASIM_ROS2_MODE=docker` to launch through the headless ROS 2 container, or `auto` to select that container when its image exists.
 
 `coppelia_ros2` supports `publish`, `echo`, `service_call`, and `action_goal`. Pass `operation`, absolute ROS name, `interface_type` such as `std_msgs/msg/String`, and a JSON-object `payload` except for `echo`. Each operation uses Docker with host networking and shared IPC; `ROS_DOMAIN_ID` defaults to `0`.
 
