@@ -9,8 +9,6 @@ Algorithm:
    - Terus melaju lurus ke depan.
 """
 
-import time
-import math
 
 sim.startSimulation()
 
@@ -45,47 +43,48 @@ if obs == -1:
     sim.setShapeColor(obs, None, sim.colorcomponent_ambient_diffuse, [0.9, 0.1, 0.1])
     print("Balok obstacle merah ditambahkan di depan robot [x=1.8, y=0.0]")
 
-start_loop_time = time.time()
-MAX_RUN_TIME = 20.0 # Jalankan demonstrasi selama 20 detik
+MAX_RUN_TIME = 20.0  # Simulation seconds
+sim.setStepping(True)
+try:
+    start_loop_time = sim.getSimulationTime()
 
-while time.time() - start_loop_time < MAX_RUN_TIME:
-    # 1. Baca semua sensor depan
-    min_distance = 999.0
-    detected = False
+    while sim.getSimulationTime() - start_loop_time < MAX_RUN_TIME:
+        # 1. Baca semua sensor depan
+        min_distance = 999.0
+        detected = False
 
-    for s in front_sensors:
-        res, dist, pt, obj, normal = sim.readProximitySensor(s)
-        if res > 0 and dist < min_distance:
-            min_distance = dist
-            detected = True
+        for s in front_sensors:
+            res, dist, pt, obj, normal = sim.readProximitySensor(s)
+            if res > 0 and dist < min_distance:
+                min_distance = dist
+                detected = True
 
-    # 2. Logika Kemudi
-    if detected and min_distance < SAFE_DISTANCE:
-        print(f"[OBSTACLE DETECTED] Jarak rintangan: {min_distance:.2f} m! Memutar 90 derajat ke kiri...")
-        # Rem sesaat
-        sim.setJointTargetVelocity(left_motor, 0.0)
-        sim.setJointTargetVelocity(right_motor, 0.0)
-        time.sleep(0.2)
+        # 2. Logika Kemudi
+        if detected and min_distance < SAFE_DISTANCE:
+            print(f"[OBSTACLE DETECTED] Jarak rintangan: {min_distance:.2f} m! Memutar 90 derajat ke kiri...")
+            brake_until = sim.getSimulationTime() + 0.2
+            sim.setJointTargetVelocity(left_motor, 0.0)
+            sim.setJointTargetVelocity(right_motor, 0.0)
+            while sim.getSimulationTime() < brake_until:
+                sim.step()
 
-        # Putar 90 derajat
-        sim.setJointTargetVelocity(left_motor, -TURN_SPEED)
-        sim.setJointTargetVelocity(right_motor, TURN_SPEED)
-        time.sleep(TURN_DURATION_90_DEG)
+            turn_until = sim.getSimulationTime() + TURN_DURATION_90_DEG
+            sim.setJointTargetVelocity(left_motor, -TURN_SPEED)
+            sim.setJointTargetVelocity(right_motor, TURN_SPEED)
+            while sim.getSimulationTime() < turn_until:
+                sim.step()
 
-        # Stop putar
-        sim.setJointTargetVelocity(left_motor, 0.0)
-        sim.setJointTargetVelocity(right_motor, 0.0)
-        time.sleep(0.1)
-        print("[TURN COMPLETE] Selesai memutar 90 derajat. Melanjutkan maju ke depan...")
-    else:
-        # Maju lurus
-        sim.setJointTargetVelocity(left_motor, BASE_SPEED)
-        sim.setJointTargetVelocity(right_motor, BASE_SPEED)
-        time.sleep(0.05)
-
-# Selesai demonstrasi, hentikan motor
-sim.setJointTargetVelocity(left_motor, 0.0)
-sim.setJointTargetVelocity(right_motor, 0.0)
-
+            sim.setJointTargetVelocity(left_motor, 0.0)
+            sim.setJointTargetVelocity(right_motor, 0.0)
+            print("[TURN COMPLETE] Selesai memutar 90 derajat. Melanjutkan maju ke depan...")
+        else:
+            sim.setJointTargetVelocity(left_motor, BASE_SPEED)
+            sim.setJointTargetVelocity(right_motor, BASE_SPEED)
+            sim.step()
+finally:
+    # Stop motors and leave simulation running in normal non-stepping mode.
+    sim.setJointTargetVelocity(left_motor, 0.0)
+    sim.setJointTargetVelocity(right_motor, 0.0)
+    sim.setStepping(False)
 pos_akhir = sim.getObjectPosition(sim.getObject('/PioneerP3DX'), -1)
 print(f"Demonstrasi navigasi selesai. Posisi akhir robot: {[round(x, 2) for x in pos_akhir]}")

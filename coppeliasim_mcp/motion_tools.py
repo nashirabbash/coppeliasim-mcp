@@ -112,14 +112,13 @@ def plan_joint_path(
 
 
 def runtime_health(host: str, port: int) -> dict:
-    from .sim_connection import RemoteAPIClient, is_coppelia_running
+    from .sim_connection import RemoteAPIClient
 
-    reachable = is_coppelia_running(host, port)
     result = {"connected": False, "host": host, "port": port, "simIK": False, "simOMPL": False}
-    if not reachable:
-        result["error"] = "CoppeliaSim ZeroMQ API is not reachable"
-        return result
     try:
+        if RemoteAPIClient is None:
+            from .sim_connection import REMOTE_API_IMPORT_ERROR
+            raise ImportError(f"Failed to import coppeliasim_zmqremoteapi_client: {REMOTE_API_IMPORT_ERROR}. Run setup_env.sh first.")
         client = RemoteAPIClient(host=host, port=port)
         sim = client.require("sim")
         result["connected"] = True

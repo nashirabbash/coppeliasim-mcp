@@ -1,8 +1,6 @@
 """End-to-End Verification: House with 5m walls, roof, and a walking/mobile robot."""
 
-# Stop any running simulation and clear old scene objects if present
-sim.stopSimulation()
-
+stop_simulation()
 # Helper to configure static & respondable obstacle
 def make_box(size, pos, color=None):
     handle = sim.createPrimitiveShape(sim.primitiveshape_cuboid, size, 0)

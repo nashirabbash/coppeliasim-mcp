@@ -74,13 +74,14 @@ INJECTED OBJECTS IN CODE:
   Valid aliases: ['pioneer', 'youbot', 'hexapod', 'ant_hexapod', 'omni', 'quadcopter', 'asti', 'panda', 'ur5', 'ur10', 'vacuum', 'epuck'].
 - `get_scene_hierarchy()`: Returns root objects with nested children for every non-system object type.
 - `get_floor_info()`: Returns default floor size, position, and bounding box.
+- `stop_simulation()`: Stops simulation and waits until it is fully stopped.
 - `client`: RemoteAPIClient instance.
 
 EXACT API CHEAT-SHEET (DO NOT SEARCH OR GUESS - USE THESE DIRECTLY):
 1. Shapes & Environment:
    - Create cuboid: `h = sim.createPrimitiveShape(sim.primitiveshape_cuboid, [sizeX, sizeY, sizeZ], 0)`
    - Create cylinder: `h = sim.createPrimitiveShape(sim.primitiveshape_cylinder, [diameter, diameter, height], 0)`
-   - Create sphere: `h = sim.createPrimitiveShape(sim.primitiveshape_sphere, [diameter, diameter, diameter], 0)`
+   - Create sphere: `h = sim.createPrimitiveShape(sim.primitiveshape_spheroid, [diameter, diameter, diameter], 0)`
    - Make static (walls/floors/roofs): `sim.setObjectInt32Param(h, sim.shapeintparam_static, 1)`
    - Make respondable (solid collisions): `sim.setObjectInt32Param(h, sim.shapeintparam_respondable, 1)`
    - Color shape: `sim.setShapeColor(h, None, sim.colorcomponent_ambient_diffuse, [R, G, B])` # values 0.0 - 1.0
@@ -107,12 +108,12 @@ Optional `diagnostics` request returns structured results in the JSON text conte
 
 5. Simulation & Motors:
    - Start simulation: `sim.startSimulation()`
-   - Stop simulation: `sim.stopSimulation()`
+   - Stop and wait before scene edits: `stop_simulation()`
    - Set motor velocity: `sim.setJointTargetVelocity(jointHandle, float_val)`
    - Read proximity sensor: `detected, dist, pt, obj, normal = sim.readProximitySensor(sensorHandle)`
 
 ```python
-sim.stopSimulation()
+stop_simulation()
 # House floor
 floor = sim.createPrimitiveShape(sim.primitiveshape_cuboid, [10.0, 10.0, 0.2], 0)
 sim.setObjectInt32Param(floor, sim.shapeintparam_static, 1)
@@ -137,15 +138,17 @@ async def execute_step(script: str, reset: bool, headless: bool, timeout: float,
     package_root = str(Path(__file__).resolve().parent.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
-    process = await asyncio.create_subprocess_exec(
-        *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env=env
-    )
+    process = None
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(script.encode()), timeout=timeout + 35)
+        process = await asyncio.create_subprocess_exec(
+            *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=env
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(script.encode()), timeout=timeout + 35)
     except asyncio.CancelledError:
-        process.terminate()
-        await process.wait()
+        if process is not None:
+            process.terminate()
+            await process.wait()
         log("info", "simulator.script_cancelled")
         raise
     except asyncio.TimeoutError:
@@ -153,10 +156,25 @@ async def execute_step(script: str, reset: bool, headless: bool, timeout: float,
         await process.wait()
         log("error", "simulator.request_timed_out", timeout=timeout)
         return {"success": False, "error": "CoppeliaSim request timed out", "stdout": "", "stderr": ""}
+    except OSError as error:
+        return {"success": False, "error": f"Could not start CoppeliaSim runner: {error}", "stdout": "", "stderr": ""}
     try:
-        return json.loads(stdout)
+        result = json.loads(stdout)
+        result.setdefault("success", False)
+        result.setdefault("stdout", "")
+        result.setdefault("stderr", "")
+        result.setdefault("error", None)
+        return result
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"success": False, "error": f"Runner exited with status {process.returncode}", "stdout": "", "stderr": ""}
+        stdout_text = stdout.decode(errors="replace").strip()
+        stderr_text = stderr.decode(errors="replace").strip()
+        detail = stderr_text or stdout_text or "Runner produced no output"
+        return {
+            "success": False,
+            "error": f"Runner protocol error (exit status {process.returncode}): {detail}",
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+        }
 
 
 @server.tool(

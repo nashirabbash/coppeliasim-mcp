@@ -211,10 +211,8 @@ def record_dataset(
         finally:
             sim.setStepping(False)
             if stop_on_finish and sim.getSimulationState() != sim.simulation_stopped:
-                try:
-                    sim.stopSimulation()
-                except Exception:
-                    pass
+                from .scene_io import stop_simulation
+                stop_simulation(sim)
 
         result = {
             "success": True,

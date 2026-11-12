@@ -45,8 +45,10 @@ def main(argv: list[str] | None = None, args: list[str] | None = None) -> None:
         return
 
     if parsed_args.only_launch:
-        if not is_coppelia_running(parsed_args.host, parsed_args.port):
-            launch_coppelia(headless=parsed_args.launch_headless)
+        ready = is_coppelia_running(parsed_args.host, parsed_args.port) or launch_coppelia(headless=parsed_args.launch_headless)
+        if not ready:
+            print(json.dumps({"success": False, "error": f"CoppeliaSim ZeroMQ API at {parsed_args.host}:{parsed_args.port} did not become ready."}))
+            sys.exit(1)
         print(json.dumps({"success": True, "message": "CoppeliaSim is running and ready."}))
         return
 
