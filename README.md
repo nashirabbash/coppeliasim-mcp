@@ -91,6 +91,15 @@ For Claude Desktop, use its `claude_desktop_config.json` (`~/.config/Claude/` on
 GUI clients may not inherit shell environment variables. Add `"env": {"COPPELIASIM_ROOT": "/path/to/coppeliaSim"}` to the server entry when needed. After installation, `.venv/bin/coppeliasim-mcp` is also available as a stdio server entry point.
 
 **Trust boundary:** `coppelia_step` executes Python on the server host with that process's filesystem and network access. It is not a sandbox. Only connect trusted clients and run trusted code. Save scene work before loading scenes, running experiments, or benchmarking physics.
+For restartable behavior, attach the controller as a script in the scene and save that scene; one-shot Python and external ROS 2 controllers are not saved with it. Add a persistent sensor display only when requested.
+
+`coppelia_health` probes its configured endpoint and plugins but does not launch CoppeliaSim. A GUI process alone does not prove that endpoint is reachable. Stop requests may return before reset finishes; call injected `stop_simulation()` or wait for `sim.getSimulationState() == sim.simulation_stopped` before scene edits.
+
+On failures, report the exact error and inspect traceback, runner output, `stderr`, and `/tmp/coppelia_stdout.log`. `success: false` remains failure even if a subprocess says `Runner exited with status 0`. A successful CLI run proves CLI behavior, not repaired MCP transport.
+
+The WASD example reads terminal input and sends `wasd_cmd`; its source alone does not establish a scene-side signal receiver or prove keyboard-driven robot motion. The example requires receiver verification and an observed live keypress before claiming teleoperation works.
+
+Use `sim.primitiveshape_spheroid` for a spheroid ([primitive constants](https://manual.coppeliarobotics.com/en/apiConstants.htm#primitiveTypes)). In CoppeliaSim scripts, use `sim.getSimulationTime()` ([API](https://manual.coppeliarobotics.com/en/sim/simGetSimulationTime.htm)) for simulation time. For camera framing, `coppelia_step` injects `capture_snapshot()` and `capture_topdown()`; `coppeliasim_mcp.observation_tools` also provides `ensure_camera(sim, name, pos, rot, fov_deg)` and `auto_frame_gui_camera(sim)`. Keep both top-down and isometric views for verification.
 
 ## Tools
 

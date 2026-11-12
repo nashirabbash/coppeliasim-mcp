@@ -6,24 +6,19 @@ from coppeliasim_mcp import runner, sim_connection
 
 
 class TestSimConnection(unittest.TestCase):
-    @patch("coppeliasim_mcp.sim_connection.socket.create_connection")
-    def test_is_coppelia_running_success_default_args(self, mock_conn):
-        mock_conn.return_value.__enter__.return_value = MagicMock()
-        self.assertTrue(sim_connection.is_coppelia_running())
-        mock_conn.assert_called_once_with(("localhost", 23000), timeout=1.0)
-
-    @patch("coppeliasim_mcp.sim_connection.socket.create_connection")
-    def test_is_coppelia_running_custom_args_and_timeout(self, mock_conn):
-        mock_conn.return_value.__enter__.return_value = MagicMock()
+    @patch("coppeliasim_mcp.sim_connection.RemoteAPIClient")
+    def test_is_coppelia_running_probes_remote_api(self, mock_client_cls):
+        client, sim = MagicMock(), MagicMock()
+        sim.intparam_program_version = 1000
+        sim.getInt32Param.return_value = 41200
+        client.require.return_value = sim
+        mock_client_cls.return_value = client
         self.assertTrue(sim_connection.is_coppelia_running("127.0.0.2", 24000))
-        mock_conn.assert_called_once_with(("127.0.0.2", 24000), timeout=1.0)
+        mock_client_cls.assert_called_once_with(host="127.0.0.2", port=24000)
+        client.require.assert_called_once_with("sim")
 
-    @patch("coppeliasim_mcp.sim_connection.socket.create_connection", side_effect=ConnectionRefusedError("Connection refused"))
-    def test_is_coppelia_running_connection_refused(self, mock_conn):
-        self.assertFalse(sim_connection.is_coppelia_running())
-
-    @patch("coppeliasim_mcp.sim_connection.socket.create_connection", side_effect=OSError("Network unreachable"))
-    def test_is_coppelia_running_os_error(self, mock_conn):
+    @patch("coppeliasim_mcp.sim_connection.RemoteAPIClient", side_effect=OSError("unreachable"))
+    def test_is_coppelia_running_reports_unavailable_remote_api(self, mock_client_cls):
         self.assertFalse(sim_connection.is_coppelia_running())
 
     @patch("coppeliasim_mcp.sim_connection.is_coppelia_running")
@@ -46,7 +41,7 @@ class TestSimConnection(unittest.TestCase):
         mock_run.assert_not_called()
 
     @patch("coppeliasim_mcp.sim_connection.time.sleep")
-    @patch("coppeliasim_mcp.sim_connection.time.time", side_effect=[0.0, 0.0, 1.0])
+    @patch("coppeliasim_mcp.sim_connection.time.monotonic", side_effect=[0.0, 0.0, 1.0])
     @patch("coppeliasim_mcp.sim_connection.subprocess.run")
     @patch("coppeliasim_mcp.sim_connection.is_coppelia_running", side_effect=[False, False, True])
     def test_launch_coppelia_headless_and_polling_success(self, mock_is_running, mock_run, mock_time, mock_sleep):
@@ -54,13 +49,13 @@ class TestSimConnection(unittest.TestCase):
         self.assertTrue(sim_connection.launch_coppelia(headless=True, timeout=10))
         mock_run.assert_called_once()
         self.assertEqual(mock_run.call_args.args[0], expected_cmd)
-        self.assertTrue(mock_run.call_args.kwargs["check"])
+        self.assertTrue(mock_run.call_args.kwargs["capture_output"])
         self.assertEqual(mock_run.call_args.kwargs["env"]["COPPELIASIM_PYTHON"], sim_connection.sys.executable)
         mock_sleep.assert_called_once_with(0.5)
         self.assertEqual(mock_is_running.call_count, 3)
 
     @patch("coppeliasim_mcp.sim_connection.time.sleep")
-    @patch("coppeliasim_mcp.sim_connection.time.time", side_effect=[0.0, 0.0, 10.0])
+    @patch("coppeliasim_mcp.sim_connection.time.monotonic", side_effect=[0.0, 0.0, 10.0])
     @patch("coppeliasim_mcp.sim_connection.subprocess.run")
     @patch("coppeliasim_mcp.sim_connection.is_coppelia_running", return_value=False)
     def test_launch_coppelia_timeout_returns_false(self, mock_is_running, mock_run, mock_time, mock_sleep):
@@ -68,14 +63,15 @@ class TestSimConnection(unittest.TestCase):
         self.assertFalse(sim_connection.launch_coppelia(headless=False, timeout=10))
         mock_run.assert_called_once()
         self.assertEqual(mock_run.call_args.args[0], expected_cmd)
-        self.assertTrue(mock_run.call_args.kwargs["check"])
+        self.assertTrue(mock_run.call_args.kwargs["capture_output"])
         self.assertEqual(mock_run.call_args.kwargs["env"]["COPPELIASIM_PYTHON"], sim_connection.sys.executable)
         mock_sleep.assert_called_once_with(0.5)
 
-    @patch("coppeliasim_mcp.sim_connection.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["cmd"]))
+    @patch("coppeliasim_mcp.sim_connection.subprocess.run")
     @patch("coppeliasim_mcp.sim_connection.is_coppelia_running", return_value=False)
-    def test_launch_coppelia_subprocess_error_propagates(self, mock_is_running, mock_run):
-        with self.assertRaises(subprocess.CalledProcessError):
+    def test_launch_coppelia_reports_captured_startup_error(self, mock_is_running, mock_run):
+        mock_run.side_effect = subprocess.CalledProcessError(1, ["cmd"], stderr="launcher diagnostic")
+        with self.assertRaisesRegex(RuntimeError, "launcher diagnostic"):
             sim_connection.launch_coppelia()
 
     @patch("coppeliasim_mcp.sim_connection.launch_coppelia")

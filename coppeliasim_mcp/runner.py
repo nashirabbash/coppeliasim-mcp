@@ -17,6 +17,7 @@ import math
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import signal
+import traceback
 import time
 from .json_log import log
 
@@ -170,6 +171,9 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             }
 
     try:
+        if RemoteAPIClient is None:
+            from .sim_connection import REMOTE_API_IMPORT_ERROR
+            raise ImportError(f"Failed to import coppeliasim_zmqremoteapi_client: {REMOTE_API_IMPORT_ERROR}. Run setup_env.sh first.")
         client = RemoteAPIClient(host=host, port=port)
         sim = client.require("sim")
         try:
@@ -188,11 +192,18 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             "stderr": ""
         }
 
+    from .scene_io import stop_simulation
+
     if reset:
         try:
-            sim.stopSimulation()
-        except Exception:
-            pass
+            stop_simulation(sim)
+        except Exception as error:
+            return {
+                "success": False,
+                "error": str(error),
+                "stdout": "",
+                "stderr": traceback.format_exc(),
+            }
 
     # Always ensure both cameras exist in scene hierarchy on connection
     try:
@@ -201,6 +212,7 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
     except Exception:
         pass
     load_robot_fn = make_load_robot_fn(sim)
+
     from .motion_tools import plan_joint_path, solve_ik
 
     env = {
@@ -217,6 +229,7 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
         "get_floor_info": lambda: get_floor_info(sim),
         "get_scene_hierarchy": lambda: get_scene_hierarchy(sim),
     }
+    env["stop_simulation"] = lambda: stop_simulation(sim)
 
 
     stdout_buf = io.StringIO()
@@ -233,8 +246,9 @@ def run_code(code: str, host: str = "localhost", port: int = 23000, take_snapsho
             try:
                 exec(code, env)
                 exec_success = True
-            except Exception as e:
-                exec_error = str(e)
+            except Exception as error:
+                exec_error = str(error)
+                stderr_buf.write(traceback.format_exc())
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, old_handler)

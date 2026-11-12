@@ -25,8 +25,8 @@ def stop_simulation(sim) -> None:
         return
     log("info", "simulation.stopping_before_scene_load")
     sim.stopSimulation()
-    deadline = time.time() + STOP_TIMEOUT_S
-    while sim.getSimulationState() != sim.simulation_stopped and time.time() < deadline:
+    deadline = time.monotonic() + STOP_TIMEOUT_S
+    while sim.getSimulationState() != sim.simulation_stopped and time.monotonic() < deadline:
         time.sleep(0.1)
     if sim.getSimulationState() != sim.simulation_stopped:
         raise TimeoutError("Simulation did not stop within timeout")

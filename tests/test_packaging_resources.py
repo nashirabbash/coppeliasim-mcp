@@ -39,6 +39,26 @@ class PackagingResourceTests(unittest.TestCase):
             asyncio.run(package_mcp.execute_step("pass", False, False, 5, None))
         self.assertIn(str(Path(package_mcp.__file__).resolve().parent.parent), spawn.call_args.kwargs["env"]["PYTHONPATH"].split(os.pathsep))
 
+    def test_execute_step_keeps_startup_traceback_when_runner_output_is_not_json(self):
+        process = Mock()
+        process.communicate = AsyncMock(return_value=(b"", b"Traceback: connection failed"))
+        process.returncode = 0
+        with patch.object(package_mcp.asyncio, "create_subprocess_exec", new=AsyncMock(return_value=process)):
+            result = asyncio.run(package_mcp.execute_step("pass", False, False, 5, None))
+        self.assertFalse(result["success"])
+        self.assertIn("exit status 0", result["error"])
+        self.assertIn("connection failed", result["stderr"])
+
+    def test_execute_step_preserves_execution_traceback_from_runner_json(self):
+        process = Mock()
+        payload = b'{"success":false,"error":"Lua call failed","stderr":"Remote API traceback"}'
+        process.communicate = AsyncMock(return_value=(payload, b""))
+        process.returncode = 1
+        with patch.object(package_mcp.asyncio, "create_subprocess_exec", new=AsyncMock(return_value=process)):
+            result = asyncio.run(package_mcp.execute_step("pass", False, False, 5, None))
+        self.assertEqual(result["error"], "Lua call failed")
+        self.assertEqual(result["stderr"], "Remote API traceback")
+
     def test_root_mcp_shim_exports_package_public_names(self):
         for name in (name for name in vars(package_mcp) if not name.startswith("_")):
             self.assertIs(getattr(legacy_mcp, name), getattr(package_mcp, name))

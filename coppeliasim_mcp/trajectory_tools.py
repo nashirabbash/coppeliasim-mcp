@@ -65,7 +65,6 @@ def _check_collisions(sim, collision_pairs):
     for first, second, paths in collision_pairs:
         if sim.checkCollision(first, second)[0]:
             log("error", "trajectory.collision_detected", objects=paths)
-            sim.stopSimulation()
             raise RuntimeError(f"Collision detected between {paths[0]} and {paths[1]}")
 
 def _measure_distance(sim, first, second, threshold, kind):
@@ -154,6 +153,7 @@ def execute_trajectory(sim, joints, trajectory, collision_pairs=None, max_veloci
     action_results = []
     held_grasps = []
     was_stopped = sim.getSimulationState() == sim.simulation_stopped
+    failed = False
     sim.setStepping(True)
     try:
         if was_stopped:
@@ -207,11 +207,14 @@ def execute_trajectory(sim, joints, trajectory, collision_pairs=None, max_veloci
         log("success", "trajectory.completed", waypoints=len(trajectory), steps=completed_steps, gripper_actions=len(action_results))
         return {"waypoints": len(trajectory), "steps_run": completed_steps, "final_positions": final, "gripper_results": action_results}
     except Exception as error:
+        failed = True
         log("error", "trajectory.stopped", error=str(error), steps=completed_steps)
-        sim.stopSimulation()
         raise
     finally:
         sim.setStepping(False)
+        if failed:
+            from .scene_io import stop_simulation
+            stop_simulation(sim)
 
 
 def run_trajectory(headless=False, **parameters):
